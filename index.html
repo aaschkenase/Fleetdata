@@ -738,6 +738,7 @@
 const SK = 'tagtrans_drm_v6';
 const SK_PERF = 'tagtrans_perf_v6';
 let ALERT_THRESHOLD = parseInt(localStorage.getItem('alert_threshold') || '5000');
+let PAY_THRESHOLD = parseInt(localStorage.getItem('pay_threshold') || '1000');
 const LATEST_WEEK = '2026-04-26';
 const PREV_WEEK   = '2026-04-12';
 
@@ -750,11 +751,13 @@ function dispPerf(dispId){
   if(!active.length) return null;
   const ps = active.map(d=>PERF[d.id]).filter(Boolean);
   if(!ps.length) return null;
+  const payPerfs = ps.filter(p => p.ap > 0);
   return {
-    avgRev:  Math.round(ps.reduce((s,p)=>s+p.av,0)/ps.length),
-    avgRptm: Math.round(ps.reduce((s,p)=>s+p.ar,0)/ps.length*100)/100,
-    avgMiles:Math.round(ps.reduce((s,p)=>s+p.am,0)/ps.length),
+    avgRev:   Math.round(ps.reduce((s,p)=>s+p.av,0)/ps.length),
+    avgRptm:  Math.round(ps.reduce((s,p)=>s+p.ar,0)/ps.length*100)/100,
+    avgMiles: Math.round(ps.reduce((s,p)=>s+p.am,0)/ps.length),
     totalGross: ps.reduce((s,p)=>s+p.tv,0),
+    avgPay:   payPerfs.length ? Math.round(payPerfs.reduce((s,p)=>s+p.ap,0)/payPerfs.length) : 0,
   };
 }
 
@@ -881,6 +884,7 @@ async function load() {
 // savePerf: localStorage only (PERF baseline is in code; updates are re-importable)
 function savePerf() {
   localStorage.setItem(SK_PERF, JSON.stringify(PERF));
+  computeRiskFlags();
 }
 
 function uid() {
@@ -1037,6 +1041,80 @@ function dispStats(dispId) {
     ? cur.reduce((s,d) => s + Math.floor((Date.now() - new Date(d.hireDate)) / 86400000), 0) / cur.length
     : 0;
   return { act, risk, term, tot, ret, retAdj, noFaultCount, unreviewed, avgD };
+}
+
+
+// ============================================================
+//  PAY-BASED RISK FLAGS
+// ============================================================
+function computeRiskFlags() {
+  let changed = false;
+  for (const drv of S.drivers) {
+    if (drv.status === 'terminated') continue;
+    const p = PERF[drv.id];
+    const avgPay = p ? p.ap : 0;
+    const shouldBeAtRisk = avgPay > 0 && avgPay < PAY_THRESHOLD;
+    if (shouldBeAtRisk && drv.status === 'active') {
+      drv.status = 'at_risk';
+      drv._payFlagged = true;
+      changed = true;
+    } else if (!shouldBeAtRisk && drv.status === 'at_risk' && drv._payFlagged) {
+      // Only auto-recover if we auto-flagged it
+      drv.status = 'active';
+      drv._payFlagged = false;
+      changed = true;
+    }
+  }
+  if (changed) save();
+}
+
+function drvPaycheckHTML(drvId) {
+  const p = PERF[drvId];
+  if (!p || !p.h || !p.h.length) return '';
+  // Only weeks where a paycheck was actually recorded
+  const paidWeeks = p.h.filter(function(r){ return r[5] > 0; });
+  if (!paidWeeks.length) return '';
+  const pays    = paidWeeks.map(function(r){ return r[5]; });
+  const avgPay  = Math.round(pays.reduce(function(s,v){return s+v;},0) / pays.length);
+  const bestPay = Math.max.apply(null, pays);
+  const wrstPay = Math.min.apply(null, pays);
+  const last4p  = paidWeeks.slice(0,4).map(function(r){return r[5];});
+  const l4avg   = last4p.length ? Math.round(last4p.reduce(function(s,v){return s+v;},0)/last4p.length) : 0;
+  const trend   = l4avg > avgPay*1.08 ? 'up' : l4avg < avgPay*0.92 ? 'down' : 'flat';
+  const isRisk  = avgPay > 0 && avgPay < PAY_THRESHOLD;
+  const tArrow  = trend==='up' ? '&#8593;' : trend==='down' ? '&#8595;' : '&#8594;';
+  const tColor  = trend==='up' ? 'var(--green)' : trend==='down' ? 'var(--red)' : 'var(--text-2)';
+  var rows = paidWeeks.map(function(row) {
+    var payPct = row[4] > 0 ? Math.round(row[5]/row[4]*100) : 0;
+    var isLow  = row[5] < PAY_THRESHOLD;
+    var payColor = isLow ? 'var(--red)' : row[5]>=1500 ? 'var(--green)' : 'var(--text-1)';
+    return '<tr style="border-bottom:1px solid rgba(255,255,255,.04);">'+
+      '<td style="padding:4px 8px;color:var(--text-2)">'+row[0]+'</td>'+
+      '<td style="padding:4px 8px;text-align:right">'+row[1].toLocaleString()+'</td>'+
+      '<td style="padding:4px 8px;text-align:right;color:var(--accent)">$'+row[4].toLocaleString()+'</td>'+
+      '<td style="padding:4px 8px;text-align:right;font-weight:500;color:'+payColor+'">$'+row[5].toLocaleString()+'</td>'+
+      '<td style="padding:4px 8px;text-align:right;color:var(--text-2)">'+payPct+'%</td>'+
+    '</tr>';
+  }).join('');
+  var th = function(t,r){return '<th style="text-align:'+(r?'right':'left')+';padding:4px 8px;color:var(--text-2);font-family:Barlow Condensed,sans-serif;font-size:9px;letter-spacing:.1em;font-weight:700;">'+t+'</th>';};
+  return '<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">'+
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">'+
+      '<div class="pf-label">Paycheck History <span style="color:var(--text-2);font-weight:400;font-size:10px;">('+paidWeeks.length+' paid weeks)</span></div>'+
+      (isRisk ? '<span class="pill amber"><span class="pill-dot"></span>Pay At Risk &#8212; avg $'+avgPay.toLocaleString()+'/wk</span>' : '')+
+    '</div>'+
+    '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px;">'+
+      '<div class="pf"><div class="pf-label">Avg Take-Home</div><div class="pf-value" style="color:'+(isRisk?'var(--amber)':'var(--green)')+'">$'+avgPay.toLocaleString()+'</div></div>'+
+      '<div class="pf"><div class="pf-label">Best Week</div><div class="pf-value c-green">$'+bestPay.toLocaleString()+'</div></div>'+
+      '<div class="pf"><div class="pf-label">Lowest Paid Wk</div><div class="pf-value c-red">$'+wrstPay.toLocaleString()+'</div></div>'+
+      '<div class="pf"><div class="pf-label">Last 4 Paid Wks</div><div class="pf-value" style="color:'+tColor+'">$'+l4avg.toLocaleString()+' '+tArrow+'</div></div>'+
+    '</div>'+
+    '<table style="width:100%;border-collapse:collapse;font-size:11px;font-family:DM Mono,monospace;">'+
+      '<thead><tr style="border-bottom:1px solid var(--border);">'+
+        th('WEEK',false)+th('MILES',true)+th('REVENUE',true)+th('TAKE-HOME',true)+th('PAY %',true)+
+      '</tr></thead>'+
+      '<tbody>'+rows+'</tbody>'+
+    '</table>'+
+  '</div>';
 }
 
 function fleetStats() {
@@ -1247,7 +1325,7 @@ function dispCard(d) {
         </div>
         ${(()=>{const dp=dispPerf(d.id);return dp?`<div class="dc-stat"><span class="dc-stat-val c-accent">$${dp.avgRev.toLocaleString()}</span><span class="dc-stat-lbl">Avg Rev/Wk</span></div>`:`<div class="dc-stat"><span class="dc-stat-val">—</span><span class="dc-stat-lbl">Avg Rev/Wk</span></div>`})()}
       </div>
-      ${(()=>{const dp=dispPerf(d.id);return dp?`<div style="display:flex;gap:12px;margin-bottom:10px;font-size:10px;color:var(--text-2);font-family:'DM Mono',monospace;"><span>RPTM <span style="color:var(--text-1)">${dp.avgRptm.toFixed(2)}</span></span><span>Mi/Wk <span style="color:var(--text-1)">${dp.avgMiles.toLocaleString()}</span></span><span>Fleet Gross <span style="color:var(--accent)">$${(dp.totalGross/1000).toFixed(0)}K</span></span></div>`:''})()}
+      ${(()=>{const dp=dispPerf(d.id);return dp?`<div style="display:flex;gap:12px;margin-bottom:10px;font-size:10px;color:var(--text-2);font-family:'DM Mono',monospace;"><span>RPTM <span style="color:var(--text-1)">${dp.avgRptm.toFixed(2)}</span></span><span>Mi/Wk <span style="color:var(--text-1)">${dp.avgMiles.toLocaleString()}</span></span><span>Gross <span style="color:var(--accent)">$${(dp.totalGross/1000).toFixed(0)}K</span></span>${dp.avgPay>0?`<span style="color:var(--amber)">Pay <span style="color:${dp.avgPay<PAY_THRESHOLD?'var(--red)':'var(--text-1)'}">$${dp.avgPay.toLocaleString()}/wk</span></span>`:''}</div>`:''})()}
       <div class="dc-pills">
         ${s.act  ? `<span class="pill green"><span class="pill-dot"></span>${s.act} Active</span>`   : ''}
         ${s.risk ? `<span class="pill amber"><span class="pill-dot"></span>${s.risk} At Risk</span>` : ''}
@@ -1316,7 +1394,7 @@ function drvCard(r) {
         ${r.homeState ? `<span class="drv-sep">·</span><span>${r.homeState}</span>` : ''}
         ${r.truckNumber ? `<span class="drv-sep">·</span><span class="mono" style="font-size:9px;">${r.truckNumber}</span>` : ''}
       </div>
-      ${(()=>{const p=drvPerf(r.id);return p?`<div class="drv-meta" style="margin-top:4px;"><span class="c-accent mono" style="font-size:10px;">$${p.av.toLocaleString()}/wk avg</span><span class="drv-sep">·</span><span class="mono" style="font-size:10px;">${p.ar.toFixed(2)} RPTM</span><span class="drv-sep">·</span><span class="mono" style="font-size:10px;">${p.am.toLocaleString()} mi/wk</span><span class="drv-sep">·</span><span style="font-size:10px;">${p.w}wk data</span></div>`:''})()}
+      ${(()=>{const p=drvPerf(r.id);if(!p) return '';const payRisk=p.ap>0&&p.ap<PAY_THRESHOLD;return `<div class="drv-meta" style="margin-top:4px;"><span class="c-accent mono" style="font-size:10px;">$${p.av.toLocaleString()}/wk avg</span><span class="drv-sep">·</span><span class="mono" style="font-size:10px;">${p.ar.toFixed(2)} RPTM</span><span class="drv-sep">·</span><span class="mono" style="font-size:10px;">${p.am.toLocaleString()} mi/wk</span><span class="drv-sep">·</span><span style="font-size:10px;">${p.w}wk</span>${payRisk?`<span class="drv-sep">·</span><span style="font-size:10px;color:var(--amber);">⚠ $${Math.round(p.ap).toLocaleString()} take-home</span>`:''}</div>`;})()}
     </div>`;
 }
 
@@ -1379,6 +1457,14 @@ function setAlertThreshold(val) {
   localStorage.setItem('alert_threshold', ALERT_THRESHOLD);
   renderHeader();
   if (S.view === 'alerts') renderAlerts();
+}
+
+function setPayThreshold(val) {
+  PAY_THRESHOLD = parseInt(val) || 1000;
+  localStorage.setItem('pay_threshold', PAY_THRESHOLD);
+  computeRiskFlags();
+  renderStats();
+  renderMain();
 }
 
 function getExceptions() {
@@ -1482,14 +1568,26 @@ function renderAlerts() {
         <div class="section-title">Exception Report</div>
         <div class="section-sub">Driver performance flags · ${LATEST_WEEK} vs ${PREV_WEEK}</div>
       </div>
-      <div style="display:flex;align-items:center;gap:8px;">
-        <span style="font-size:12px;color:var(--text-2);">Revenue target:</span>
-        <div style="display:flex;align-items:center;gap:0;border:1px solid var(--border-hi);border-radius:var(--radius);overflow:hidden;">
-          <span style="padding:5px 8px;background:var(--card);color:var(--text-2);font-size:12px;border-right:1px solid var(--border-hi);">$</span>
-          <input type="number" value="${ALERT_THRESHOLD}" min="1000" max="20000" step="500"
-            style="width:80px;padding:5px 8px;background:var(--card);color:var(--text-1);border:none;outline:none;font-family:'DM Mono',monospace;font-size:12px;"
-            onchange="setAlertThreshold(this.value)">
-          <span style="padding:5px 8px;background:var(--card);color:var(--text-2);font-size:11px;border-left:1px solid var(--border-hi);">/wk</span>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span style="font-size:11px;color:var(--text-2);">Rev target:</span>
+          <div style="display:flex;align-items:center;border:1px solid var(--border-hi);border-radius:var(--radius);overflow:hidden;">
+            <span style="padding:4px 7px;background:var(--card);color:var(--text-2);font-size:11px;border-right:1px solid var(--border-hi);">$</span>
+            <input type="number" value="${ALERT_THRESHOLD}" min="1000" max="20000" step="500"
+              style="width:70px;padding:4px 7px;background:var(--card);color:var(--text-1);border:none;outline:none;font-family:'DM Mono',monospace;font-size:11px;"
+              onchange="setAlertThreshold(this.value)">
+            <span style="padding:4px 7px;background:var(--card);color:var(--text-2);font-size:10px;border-left:1px solid var(--border-hi);">/wk</span>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span style="font-size:11px;color:var(--amber);">⚠ Pay risk below:</span>
+          <div style="display:flex;align-items:center;border:1px solid var(--border-hi);border-radius:var(--radius);overflow:hidden;">
+            <span style="padding:4px 7px;background:var(--card);color:var(--text-2);font-size:11px;border-right:1px solid var(--border-hi);">$</span>
+            <input type="number" value="${PAY_THRESHOLD}" min="500" max="5000" step="100"
+              style="width:70px;padding:4px 7px;background:var(--card);color:var(--amber);border:none;outline:none;font-family:'DM Mono',monospace;font-size:11px;"
+              onchange="setPayThreshold(this.value)">
+            <span style="padding:4px 7px;background:var(--card);color:var(--text-2);font-size:10px;border-left:1px solid var(--border-hi);">/wk</span>
+          </div>
         </div>
         ${total > 0
           ? `<span class="pill red">${total} need attention</span>`
@@ -1634,6 +1732,8 @@ function buildDispAnalytics() {
     const term   = all.filter(d => d.status === 'terminated');
     const perfs  = active.map(d => PERF[d.id]).filter(Boolean);
     const avgRev  = perfs.length ? Math.round(perfs.reduce((s,p) => s+p.av,0)/perfs.length) : 0;
+    const payPs   = perfs.filter(p => p.ap > 0);
+    const avgPay  = payPs.length ? Math.round(payPs.reduce((s,p) => s+p.ap,0)/payPs.length) : 0;
     const avgRptm = perfs.length ? (perfs.reduce((s,p) => s+p.ar,0)/perfs.length) : 0;
     const avgDh   = perfs.length ? (perfs.reduce((s,p) => s+p.dh,0)/perfs.length) : 0;
     const gross   = perfs.reduce((s,p) => s+p.tv, 0);
@@ -1646,7 +1746,7 @@ function buildDispAnalytics() {
     const termPerfs = term.map(d => PERF[d.id]).filter(Boolean);
     const lostRev   = Math.round(termPerfs.reduce((s,p) => s + p.av * 13, 0));
     return { disp, active: active.length, term: term.length, tot,
-             avgRev, avgRptm, avgDh, gross, retAdj, avgTenure, lostRev };
+             avgRev, avgPay, avgRptm, avgDh, gross, retAdj, avgTenure, lostRev };
   }).filter(d => d.tot > 0).sort((a,b) => b.gross - a.gross);
 }
 
@@ -1799,6 +1899,9 @@ function renderAnalytics() {
   const activeDrvs = S.drivers.filter(d=>d.status!=='terminated');
   const allPerfs   = activeDrvs.map(d=>PERF[d.id]).filter(Boolean);
   const fleetAvgRev  = allPerfs.length ? Math.round(allPerfs.reduce((s,p)=>s+p.av,0)/allPerfs.length) : 0;
+  const payPerfs     = allPerfs.filter(p=>p.ap>0);
+  const fleetAvgPay  = payPerfs.length ? Math.round(payPerfs.reduce((s,p)=>s+p.ap,0)/payPerfs.length) : 0;
+  const atRiskPay    = S.drivers.filter(d=>d.status!=='terminated'&&PERF[d.id]&&PERF[d.id].ap>0&&PERF[d.id].ap<PAY_THRESHOLD).length;
   const fleetAvgRptm = allPerfs.length ? (allPerfs.reduce((s,p)=>s+p.ar,0)/allPerfs.length).toFixed(2) : '—';
   const fleetAvgDh   = allPerfs.length ? (allPerfs.reduce((s,p)=>s+p.dh,0)/allPerfs.length*100).toFixed(1) : '—';
   const totalMiles   = Math.round(Object.values(PERF).reduce((s,p)=>s+p.tm,0));
@@ -1827,6 +1930,7 @@ function renderAnalytics() {
       '<td class="mono" style="text-align:center;color:var(--text-2);">'+r.term+'</td>'+
       '<td class="mono" style="text-align:right;color:'+rc+'">'+( r.retAdj!==null ? r.retAdj+'%' : '—')+(unrev?' <span style="color:var(--amber);font-size:9px;">⚠'+unrev+'</span>':'')+'</td>'+
       '<td class="mono" style="text-align:right;color:'+vc+'">$'+r.avgRev.toLocaleString()+'</td>'+
+      '<td class="mono" style="text-align:right;color:'+(r.avgPay>0&&r.avgPay<PAY_THRESHOLD?'var(--red)':r.avgPay>=1500?'var(--green)':'var(--text-1)')+'">'+(r.avgPay>0?'$'+r.avgPay.toLocaleString():'—')+'</td>'+
       '<td class="mono" style="text-align:right;color:var(--accent)">$'+Math.round(r.gross/1000)+'K</td>'+
       '<td class="mono" style="text-align:right;color:var(--text-1)">'+r.avgRptm.toFixed(2)+'</td>'+
       '<td class="mono" style="text-align:right;color:'+(r.avgDh>.15?'var(--red)':r.avgDh>.1?'var(--amber)':'var(--green)')+'">'+Math.round(r.avgDh*100)+'%</td>'+
@@ -1842,13 +1946,14 @@ function renderAnalytics() {
     '</div>'+
 
     // KPI row
-    '<div class="ret-summary-grid" style="grid-template-columns:repeat(6,1fr);margin-bottom:20px;">'+
+    '<div class="ret-summary-grid" style="grid-template-columns:repeat(7,1fr);margin-bottom:20px;">'+
       kpi('$'+Math.round(totalGross/1000000)+'.'+(Math.round(totalGross/100000)%10)+'M','13-Week Gross','all active drivers','var(--accent)')+
-      kpi('$'+lastRev.toLocaleString(),'Latest Week Revenue',growthPct>0?'↑ '+growthPct+'% since Jan':'↓ '+Math.abs(growthPct)+'% since Jan',growthPct>0?'var(--green)':'var(--red)')+
-      kpi('$'+fleetAvgRev.toLocaleString(),'Avg Rev / Driver / Wk','across active fleet','var(--text-1)')+
+      kpi('$'+lastRev.toLocaleString(),'Latest Week Rev',growthPct>0?'↑ '+growthPct+'% since Jan':'↓ '+Math.abs(growthPct)+'% since Jan',growthPct>0?'var(--green)':'var(--red)')+
+      kpi('$'+fleetAvgRev.toLocaleString(),'Avg Rev/Driver/Wk','across active fleet','var(--text-1)')+
+      kpi('$'+fleetAvgPay.toLocaleString(),'Avg Take-Home/Wk',atRiskPay>0?atRiskPay+' drivers below $'+PAY_THRESHOLD+'':'all above threshold',atRiskPay>0?'var(--amber)':'var(--green)')+
       kpi(fleetAvgRptm,'Fleet Avg RPTM','rate per total mile','var(--text-1)')+
       kpi(fleetAvgDh+'%','Fleet Avg Deadhead','lower is better',parseFloat(fleetAvgDh)>15?'var(--amber)':'var(--green)')+
-      kpi('$'+Math.round(totalLostRev/1000)+'K','Est. Revenue Lost to Turnover','1-qtr projection · '+terminated+' term\'d','var(--red)')+
+      kpi('$'+Math.round(totalLostRev/1000)+'K','Est. Lost to Turnover','1-qtr · '+terminated+' term\'d','var(--red)')+
     '</div>'+
 
     // Charts row
@@ -1869,13 +1974,29 @@ function renderAnalytics() {
       '</div>'+
     '</div>'+
 
+    // Pay chart row
+    (()=>{
+      const payBarData = dispRows.filter(r=>r.avgPay>0&&r.active>0).map(r=>({
+        n:r.disp.name, v:r.avgPay, id:r.disp.id, cnt:r.active, gross:r.gross,
+        c:r.avgPay>=1500?'var(--green)':r.avgPay>=1000?'var(--amber)':'var(--red)'
+      })).sort((a,b)=>b.v-a.v);
+      if(!payBarData.length) return '';
+      return '<div class="ret-kpi" style="padding:14px 16px;margin-bottom:20px;">'+
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">'+
+          '<div class="ret-kpi-lbl">Avg Driver Take-Home / Wk by Dispatcher</div>'+
+          '<span style="font-size:10px;color:var(--amber);">⚠ below $'+PAY_THRESHOLD+' = at risk threshold</span>'+
+        '</div>'+
+        '<div style="height:180px;">'+svgBar(payBarData)+'</div>'+
+      '</div>';
+    })()+
+
     // Scorecard table
     '<div class="ret-kpi" style="padding:16px;margin-bottom:20px;">'+
       '<div class="ret-kpi-lbl" style="margin-bottom:12px;">Dispatcher Scorecard</div>'+
       '<table class="archive-table" style="font-size:12px;">'+
         '<thead><tr>'+
           '<th>Dispatcher</th><th style="text-align:center">Active</th><th style="text-align:center">Term\'d</th>'+
-          '<th style="text-align:right">Adj Ret</th><th style="text-align:right">Avg Rev/Wk</th>'+
+          '<th style="text-align:right">Adj Ret</th><th style="text-align:right">Avg Rev/Wk</th><th style="text-align:right">Avg Pay/Wk</th>'+
           '<th style="text-align:right">Fleet Gross</th><th style="text-align:right">RPTM</th>'+
           '<th style="text-align:right">DH%</th><th style="text-align:right">Avg Tenure</th>'+
           '<th style="text-align:right">Lost Rev Est</th>'+
@@ -2643,6 +2764,7 @@ function openDrvView(drvId) {
             </div>
           </div>`;
         })()}
+        ${drvPaycheckHTML(r.id)}
         <div class="profile-actions">
           <button class="btn-ghost" onclick="openDrvModal('${r.id}')">Edit</button>
           ${r.status !== 'terminated'
@@ -2839,7 +2961,7 @@ document.addEventListener('click', function(e) {
 });
 
 loadTheme();
-load().then(() => render());
+load().then(() => { computeRiskFlags(); render(); });
 </script>
 </body>
 </html>
