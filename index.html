@@ -779,7 +779,7 @@ let S = {
   dispatchers: [],
   drivers: [],
   sel: null,
-  view: 'fleet',      // 'fleet' | 'archive' | 'alerts' | 'search' | 'analytics'
+  view: 'fleet',      // 'fleet' | 'archive' | 'alerts' | 'search' | 'analytics' | 'leaderboard' | 'alldrivers'
   drvFilter: 'all',
   archDisp: 'all',
   search: '',
@@ -1117,6 +1117,284 @@ function drvPaycheckHTML(drvId) {
   '</div>';
 }
 
+// ============================================================
+//  CS:GO RANK SYSTEM
+// ============================================================
+const RANK_TIERS = [
+  {min:1, max:8,  name:'Burek Hauler',          shortName:'Burek',     color:'#9ea7b3', bg:'rgba(158,167,179,.12)', desc:'Just started. Still figuring it out. Probably eating burek.'},
+  {min:9, max:14, name:'Rakija Runner',          shortName:'Rakija',    color:'#e8c830', bg:'rgba(232,200,48,.12)',  desc:'Getting confident. Maybe a bit too confident after that rakija.'},
+  {min:15,max:22, name:'Ohrid Operator',         shortName:'Ohrid',     color:'#4b8bd4', bg:'rgba(75,139,212,.12)', desc:'Solid and clear. Like Lake Ohrid on a good day.'},
+  {min:23,max:30, name:'Skopje Sergeant',        shortName:'Skopje',    color:'#7b5fc0', bg:'rgba(123,95,192,.12)', desc:'Running the capital. Serious about this now.'},
+  {min:31,max:38, name:'Radovish Ranger',         shortName:'Radovish',  color:'#e8a830', bg:'rgba(232,168,48,.12)', desc:'Repping Radovish. Grinding hard, no days off.'},
+  {min:39,max:46, name:'Lord of Pella',           shortName:'Pella',     color:'#e8503a', bg:'rgba(232,80,58,.12)',  desc:'Born in the capital of ancient Macedonia. One step from the throne.'},
+  {min:47,max:50, name:'Aleksandar Makedonski',  shortName:'Aleksandar',color:'#00c4a7', bg:'rgba(0,196,167,.12)', desc:'The GOAT. Conquered the known world. Now conquering dispatch.'},
+];
+
+function getDispRank(level) {
+  if (!level || level < 1) return RANK_TIERS[0];
+  return RANK_TIERS.find(t => level >= t.min && level <= t.max) || RANK_TIERS[RANK_TIERS.length-1];
+}
+
+function rankSubName(level) {
+  const tier = getDispRank(level);
+  const pos  = level - tier.min;
+  if (level === 50) return 'Aleksandar Makedonski'; // only one
+  const subs = ['I','II','III','IV','Elite','Elite Master','Master'];
+  return tier.name + (subs[pos] ? ' ' + subs[pos] : '');
+}
+
+function calcDispXP(dispId) {
+  const d = dispById(dispId);
+  if (!d) return {xp:0,level:0,pct:0,tenureXP:0,driverXP:0,revXP:0,milesXP:0,retXP:0};
+  // Tenure: use role as proxy until real hire dates are added for dispatchers
+  const roleMonths = {'Senior Load Manager':36,'Load Manager':24,'Dispatcher':12,'Trainee Dispatcher':4,'Assistant':2};
+  const months = roleMonths[d.role] || 12;
+  const tenureXP = Math.min(months * 40, 1440);
+  // Active drivers
+  const active = S.drivers.filter(r => r.dispatcherId === dispId && r.status !== 'terminated').length;
+  const driverXP = active * 150;
+  // Avg rev + miles
+  const dp = dispPerf(dispId);
+  const revXP   = dp && dp.avgRev   ? Math.round(dp.avgRev   / 1000 * 100) : 0;
+  const milesXP = dp && dp.avgMiles ? Math.round(dp.avgMiles / 500  * 50)  : 0;
+  // Retention XP — uses adjusted retention (fault-excluded, unreviewed still count)
+  const s = dispStats(dispId);
+  const ret = s.retAdj; // null if no drivers ever
+  const retXP = ret === null ? 0
+    : ret >= 90 ?  600
+    : ret >= 80 ?  200
+    : ret >= 70 ?    0
+    : ret >= 60 ? -300
+    :             -700;
+  const raw   = tenureXP + driverXP + revXP + milesXP + retXP;
+  const xp    = Math.max(0, raw); // floor at 0
+  const level = Math.min(50, Math.max(1, Math.floor(xp / 100)));
+  const pct   = Math.round((xp % 100) / 100 * 100);
+  return {xp, raw, level, pct, tenureXP, driverXP, revXP, milesXP, retXP};
+}
+
+function rankIcon(level, size) {
+  size = size || 36;
+  const tier  = getDispRank(level);
+  const c     = tier.color;
+  const s     = size, h = s, cx = s/2, cy = s/2, r = s*0.44;
+  const t = tier.shortName.includes('Silver') ? 'silver'
+    : tier.shortName.includes('Gold')   ? 'gold'
+    : tier.shortName === 'MG'           ? 'guardian'
+    : tier.shortName === 'Distinguished'? 'distinguished'
+    : tier.shortName === 'L. Eagle'     ? 'eagle'
+    : tier.shortName === 'Supreme'      ? 'supreme' : 'elite';
+  const star5 = (cx,cy,R,r,rot) => {
+    rot = rot||0; var pts=[];
+    for(var i=0;i<10;i++){var a=Math.PI/5*i+rot,rad=i%2===0?R:r;pts.push((cx+Math.cos(a)*rad).toFixed(1)+','+(cy+Math.sin(a)*rad).toFixed(1));}
+    return pts.join(' ');
+  };
+  if(t==='silver') return '<svg width="'+s+'" height="'+h+'" viewBox="0 0 '+s+' '+h+'"><path d="M'+cx+' '+Math.round(cy-r)+' L'+Math.round(cx+r)+' '+Math.round(cy-r/3)+' L'+Math.round(cx+r)+' '+Math.round(cy+r/2)+' C'+Math.round(cx+r)+' '+Math.round(cy+r*0.85)+' '+cx+' '+Math.round(cy+r)+' '+cx+' '+Math.round(cy+r)+' C'+cx+' '+Math.round(cy+r)+' '+Math.round(cx-r)+' '+Math.round(cy+r*0.85)+' '+Math.round(cx-r)+' '+Math.round(cy+r/2)+' L'+Math.round(cx-r)+' '+Math.round(cy-r/3)+' Z" fill="none" stroke="'+c+'" stroke-width="1.6"/><text x="'+cx+'" y="'+(cy+4)+'" text-anchor="middle" fill="'+c+'" font-size="'+(s*0.28)+'" font-weight="700" font-family="Courier New">'+(level<4?'I':level<6?'II':level<7?'III':'E')+'</text></svg>';
+  if(t==='gold') return '<svg width="'+s+'" height="'+h+'" viewBox="0 0 '+s+' '+h+'"><circle cx="'+cx+'" cy="'+cy+'" r="'+(r*0.7)+'" fill="none" stroke="'+c+'" stroke-width="1.4" opacity=".4"/><polygon points="'+star5(cx,cy,r,r*0.45,-Math.PI/2)+'" fill="none" stroke="'+c+'" stroke-width="1.6"/><polygon points="'+star5(cx,cy,r*0.55,r*0.25,-Math.PI/2)+'" fill="'+c+'" opacity=".25"/></svg>';
+  if(t==='guardian') return '<svg width="'+s+'" height="'+h+'" viewBox="0 0 '+s+' '+h+'"><path d="M'+cx+' '+(cy-r)+' L'+(cx+r)+' '+(cy-r*0.4)+' L'+(cx+r)+' '+(cy+r*0.3)+' C'+(cx+r)+' '+(cy+r*0.78)+' '+cx+' '+(cy+r)+' '+cx+' '+(cy+r)+' C'+cx+' '+(cy+r)+' '+(cx-r)+' '+(cy+r*0.78)+' '+(cx-r)+' '+(cy+r*0.3)+' L'+(cx-r)+' '+(cy-r*0.4)+' Z" fill="'+c+'" opacity=".12" stroke="'+c+'" stroke-width="1.6"/><line x1="'+(cx-r*.55)+'" y1="'+cy+'" x2="'+(cx+r*.55)+'" y2="'+cy+'" stroke="'+c+'" stroke-width="2"/><line x1="'+(cx-r*.55)+'" y1="'+(cy+r*.22)+'" x2="'+(cx+r*.55)+'" y2="'+(cy+r*.22)+'" stroke="'+c+'" stroke-width="1.2" opacity=".6"/></svg>';
+  if(t==='distinguished') return '<svg width="'+s+'" height="'+h+'" viewBox="0 0 '+s+' '+h+'"><path d="M'+cx+' '+(cy-r)+' L'+(cx+r)+' '+(cy-r*0.4)+' L'+(cx+r)+' '+(cy+r*0.3)+' C'+(cx+r)+' '+(cy+r*0.78)+' '+cx+' '+(cy+r)+' '+cx+' '+(cy+r)+' C'+cx+' '+(cy+r)+' '+(cx-r)+' '+(cy+r*0.78)+' '+(cx-r)+' '+(cy+r*0.3)+' L'+(cx-r)+' '+(cy-r*0.4)+' Z" fill="'+c+'" opacity=".12" stroke="'+c+'" stroke-width="1.6"/><polygon points="'+cx+','+(cy-r*.45)+' '+(cx+r*.35)+','+cy+' '+cx+','+(cy+r*.45)+' '+(cx-r*.35)+','+cy+'" fill="none" stroke="'+c+'" stroke-width="1.6"/><polygon points="'+cx+','+(cy-r*.45)+' '+(cx+r*.35)+','+cy+' '+cx+','+(cy+r*.45)+' '+(cx-r*.35)+','+cy+'" fill="'+c+'" opacity=".3"/></svg>';
+  if(t==='eagle') return '<svg width="'+s+'" height="'+h+'" viewBox="0 0 '+s+' '+h+'"><polygon points="'+star5(cx,cy,r,r*0.4,-Math.PI/2)+'" fill="'+c+'" opacity=".18" stroke="'+c+'" stroke-width="1.6" stroke-linejoin="round"/><polygon points="'+star5(cx,cy,r*.55,r*0.22,-Math.PI/2)+'" fill="'+c+'" opacity=".5"/></svg>';
+  if(t==='supreme') return '<svg width="'+s+'" height="'+h+'" viewBox="0 0 '+s+' '+h+'"><polygon points="'+star5(cx,cy,r,r*0.42,-Math.PI/2)+'" fill="'+c+'" opacity=".18" stroke="'+c+'" stroke-width="1.6"/><circle cx="'+cx+'" cy="'+cy+'" r="'+(r*0.28)+'" fill="'+c+'" opacity=".7"/><circle cx="'+cx+'" cy="'+cy+'" r="'+(r*0.14)+'" fill="'+c+'"/></svg>';
+  // elite
+  return '<svg width="'+s+'" height="'+h+'" viewBox="0 0 '+s+' '+h+'"><polygon points="'+star5(cx,cy,r,r*0.38,-Math.PI/2)+'" fill="'+c+'" opacity=".22" stroke="'+c+'" stroke-width="1.8"/><polygon points="'+star5(cx,cy,r*.6,r*0.26,-Math.PI/2)+'" fill="'+c+'" opacity=".6" stroke="'+c+'" stroke-width="1"/><circle cx="'+cx+'" cy="'+cy+'" r="'+(r*.18)+'" fill="'+c+'"/></svg>';
+}
+
+// ============================================================
+//  RENDER: LEADERBOARD
+// ============================================================
+function renderLeaderboard() {
+  const el = document.getElementById('lb-el');
+  if (!el) return;
+
+  const ranked = S.dispatchers.map(d => {
+    const xpData = calcDispXP(d.id);
+    const dp     = dispPerf(d.id);
+    const s      = dispStats(d.id);
+    const tier   = getDispRank(xpData.level);
+    return {d, xpData, dp, s, tier};
+  }).sort((a,b) => b.xpData.xp - a.xpData.xp);
+
+  const top = ranked[0];
+  const avgLvl = Math.round(ranked.reduce((s,r) => s+r.xpData.level, 0) / ranked.length);
+
+  el.innerHTML =
+    '<div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px;">'+
+      '<div><div class="section-title">Dispatcher Leaderboard</div>'+
+      '<div class="section-sub">CS:GO style ranking · levels 1–50 · updated from live data</div></div>'+
+      '<button onclick="openRankInfoModal()" style="padding:6px 14px;border-radius:var(--radius);border:1px solid var(--border-hi);background:transparent;color:var(--text-2);font-family:\'Barlow Condensed\',sans-serif;font-size:12px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;cursor:pointer;">? How Rankings Work</button>'+
+    '</div>'+
+
+    '<div class="ret-summary-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px;">'+
+      '<div class="ret-kpi"><div class="ret-kpi-val" style="color:'+top.tier.color+'">'+top.d.name.split(' ')[0]+'</div><div class="ret-kpi-lbl">Top Ranked</div><div class="ret-kpi-sub">'+rankSubName(top.xpData.level)+' · Lvl '+top.xpData.level+'</div></div>'+
+      '<div class="ret-kpi"><div class="ret-kpi-val c-accent">'+avgLvl+'</div><div class="ret-kpi-lbl">Avg Level</div><div class="ret-kpi-sub">across all dispatchers</div></div>'+
+      '<div class="ret-kpi"><div class="ret-kpi-val">'+ranked.filter(r=>r.xpData.level>=31).length+'</div><div class="ret-kpi-lbl">Eagle+ Ranked</div><div class="ret-kpi-sub">top 3 tiers</div></div>'+
+      '<div class="ret-kpi"><div class="ret-kpi-val c-red">'+ranked.filter(r=>r.xpData.level<=8).length+'</div><div class="ret-kpi-lbl">Silver Ranked</div><div class="ret-kpi-sub">need improvement</div></div>'+
+    '</div>'+
+
+    ranked.map((r,i) => {
+      const posColor = i===0?'#e8c830':i===1?'#9ea7b3':i===2?'#cd7f32':'var(--text-2)';
+      const isTop3   = i < 3;
+      const bg       = isTop3 ? r.tier.bg : '';
+      const borderC  = isTop3 ? r.tier.color+'44' : 'var(--border)';
+      return '<div style="display:flex;align-items:center;gap:14px;background:var(--card)'+(bg?';background:'+bg:'')+';border:1px solid '+borderC+';border-radius:var(--radius-lg);padding:14px 16px;margin-bottom:8px;cursor:pointer;" onclick="openDispPanel(\''+r.d.id+'\')">'+
+        '<span style="font-size:22px;font-weight:700;font-family:DM Mono,monospace;color:'+posColor+';width:30px;text-align:center;flex-shrink:0;">'+(i+1)+'</span>'+
+        rankIcon(r.xpData.level, 40)+
+        '<div style="flex:1;min-width:0;">'+
+          '<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;">'+
+            '<span style="font-family:\'Barlow Condensed\',sans-serif;font-size:14px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;">'+r.d.name+'</span>'+
+            '<span style="font-size:10px;font-weight:700;letter-spacing:.07em;font-family:\'Barlow Condensed\',sans-serif;color:'+r.tier.color+';">'+rankSubName(r.xpData.level).toUpperCase()+'</span>'+
+            '<span style="margin-left:auto;font-family:DM Mono,monospace;font-size:12px;font-weight:700;color:'+r.tier.color+';">LVL '+r.xpData.level+'</span>'+
+          '</div>'+
+          '<div style="display:flex;align-items:center;gap:6px;">'+
+            '<div style="flex:1;height:4px;background:var(--border);border-radius:99px;overflow:hidden;">'+
+              '<div style="width:'+r.xpData.pct+'%;height:100%;background:'+r.tier.color+';border-radius:99px;transition:width .4s;"></div>'+
+            '</div>'+
+            '<span style="font-size:9px;font-family:DM Mono,monospace;color:var(--text-2);">'+r.xpData.xp+' XP'+(r.xpData.retXP>0?' <span style="color:var(--green)">+'+r.xpData.retXP+' ret</span>':r.xpData.retXP<0?' <span style="color:var(--red)">'+r.xpData.retXP+' ret</span>':'')+' </span>'+
+          '</div>'+
+        '</div>'+
+        '<div style="display:flex;gap:16px;flex-shrink:0;text-align:right;">'+
+          '<div><div style="font-family:DM Mono,monospace;font-size:13px;font-weight:700;color:var(--accent);">'+(r.s.act+r.s.risk)+'</div><div style="font-size:9px;color:var(--text-2);text-transform:uppercase;letter-spacing:.08em;">Drivers</div></div>'+
+          '<div><div style="font-family:DM Mono,monospace;font-size:13px;font-weight:700;color:'+retColor5(r.s.retAdj)+';">'+(r.s.retAdj!==null?r.s.retAdj+'%':'—')+'</div><div style="font-size:9px;color:var(--text-2);text-transform:uppercase;letter-spacing:.08em;">Retention</div></div>'+
+          (r.dp?'<div><div style="font-family:DM Mono,monospace;font-size:13px;font-weight:700;">$'+r.dp.avgRev.toLocaleString()+'</div><div style="font-size:9px;color:var(--text-2);text-transform:uppercase;letter-spacing:.08em;">Avg Rev/Wk</div></div>':'')+''+
+        '</div>'+
+      '</div>';
+    }).join('')+
+
+    '<div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border);display:flex;gap:6px;flex-wrap:wrap;">'+
+      RANK_TIERS.map(t => '<span style="padding:3px 10px;border-radius:99px;background:'+t.bg+';color:'+t.color+';font-size:10px;font-weight:700;font-family:\'Barlow Condensed\',sans-serif;letter-spacing:.06em;">'+t.name+' '+t.min+'–'+t.max+'</span>').join('')+
+    '</div>';
+}
+
+function openRankInfoModal() {
+  openModal(
+    '<div class="modal"><div class="modal-header"><div class="modal-title">How Rankings Work</div>'+
+    '<button class="modal-close" onclick="closeModal()">&#x2715;</button></div>'+
+    '<div class="modal-body">'+
+    '<p style="font-size:12px;color:var(--text-2);margin-bottom:16px;line-height:1.6;">Every dispatcher earns XP each time data updates. XP determines their level (1–50) and rank tier. The goal is to reach <strong style="color:var(--accent)">Aleksandar Makedonski</strong> — there is only one. Levels are calculated from <strong style="color:var(--text-1)">five factors</strong>:</p>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">'+
+      '<div class="ret-kpi"><div class="pf-label" style="margin-bottom:4px;">Tenure</div><div style="font-family:DM Mono,monospace;font-size:18px;font-weight:700;color:var(--accent);">×40 XP/mo</div><div style="font-size:11px;color:var(--text-2);margin-top:4px;">Based on role seniority until dispatcher hire dates are entered. SLM = 36mo, LM = 24mo, Dispatcher = 12mo.</div></div>'+
+      '<div class="ret-kpi"><div class="pf-label" style="margin-bottom:4px;">Active Drivers</div><div style="font-family:DM Mono,monospace;font-size:18px;font-weight:700;color:var(--accent);">×150 XP/driver</div><div style="font-size:11px;color:var(--text-2);margin-top:4px;">Every active or at-risk driver in your fleet contributes 150 XP.</div></div>'+
+      '<div class="ret-kpi"><div class="pf-label" style="margin-bottom:4px;">Avg Gross Revenue</div><div style="font-family:DM Mono,monospace;font-size:18px;font-weight:700;color:var(--accent);">100 XP per $1K/wk</div><div style="font-size:11px;color:var(--text-2);margin-top:4px;">Average weekly revenue per driver across all active drivers.</div></div>'+
+      '<div class="ret-kpi"><div class="pf-label" style="margin-bottom:4px;">Avg Miles/Wk</div><div style="font-family:DM Mono,monospace;font-size:18px;font-weight:700;color:var(--accent);">50 XP per 500mi</div><div style="font-size:11px;color:var(--text-2);margin-top:4px;">Average weekly miles per driver. Rewards efficient loaded miles.</div></div>'+
+    '</div>'+
+    '<div class="pf-label" style="margin-bottom:8px;">Retention XP — uses adjusted score (fault-reviewed terminations excluded)</div>'+
+    '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:18px;">'+
+      '<div style="padding:8px;background:var(--green-dim);border:1px solid rgba(0,212,122,.2);border-radius:var(--radius);text-align:center;"><div style="font-family:DM Mono,monospace;font-size:14px;font-weight:700;color:var(--green);">+600</div><div style="font-size:10px;color:var(--text-2);margin-top:3px;">90%+</div></div>'+
+      '<div style="padding:8px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);text-align:center;"><div style="font-family:DM Mono,monospace;font-size:14px;font-weight:700;color:var(--text-1);">+200</div><div style="font-size:10px;color:var(--text-2);margin-top:3px;">80–89%</div></div>'+
+      '<div style="padding:8px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);text-align:center;"><div style="font-family:DM Mono,monospace;font-size:14px;font-weight:700;color:var(--text-2);">±0</div><div style="font-size:10px;color:var(--text-2);margin-top:3px;">70–79%</div></div>'+
+      '<div style="padding:8px;background:var(--amber-dim);border:1px solid rgba(245,166,35,.2);border-radius:var(--radius);text-align:center;"><div style="font-family:DM Mono,monospace;font-size:14px;font-weight:700;color:var(--amber);">−300</div><div style="font-size:10px;color:var(--text-2);margin-top:3px;">60–69%</div></div>'+
+      '<div style="padding:8px;background:var(--red-dim);border:1px solid rgba(255,77,77,.2);border-radius:var(--radius);text-align:center;"><div style="font-family:DM Mono,monospace;font-size:14px;font-weight:700;color:var(--red);">−700</div><div style="font-size:10px;color:var(--text-2);margin-top:3px;">Below 60%</div></div>'+
+    '</div>'+
+    '<div class="pf-label" style="margin-bottom:10px;">Rank Tiers</div>'+
+    '<div style="display:flex;flex-direction:column;gap:6px;">'+
+    RANK_TIERS.map(t =>
+      '<div style="display:flex;align-items:center;gap:12px;padding:8px 12px;background:'+t.bg+';border-radius:var(--radius);border:1px solid '+t.color+'33;">'+
+      rankIcon(t.min+Math.floor((t.max-t.min)/2), 28)+
+      '<div style="flex:1;min-width:0;">'+
+        '<div><span style="font-family:\'Barlow Condensed\',sans-serif;font-weight:700;font-size:13px;letter-spacing:.05em;color:'+t.color+';">'+t.name.toUpperCase()+'</span>'+
+        '<span style="font-size:11px;color:var(--text-2);margin-left:8px;">Lvl '+t.min+'–'+t.max+' · '+t.min*100+'–'+t.max*100+' XP</span></div>'+
+        '<div style="font-size:10px;color:var(--text-2);margin-top:2px;font-style:italic;">'+t.desc+'</div>'+
+      '</div></div>'
+    ).join('')+
+    '</div>'+
+    '<div style="margin-top:14px;padding:10px 12px;background:var(--card);border-radius:var(--radius);font-size:11px;color:var(--text-2);line-height:1.5;">'+
+    '&#9432; Level = floor(Total XP ÷ 100). Max level is 50. There are two Aleksandars on the team. Neither one is Aleksandar Makedonski yet. Add dispatcher hire dates for more accurate tenure XP.'+
+    '</div>'+
+    '</div><div class="modal-footer"><button class="btn-primary" onclick="closeModal()">Got It</button></div></div>'
+  );
+}
+
+// ============================================================
+//  RENDER: ALL DRIVERS TABLE
+// ============================================================
+let drvSort = 'name', drvSortDir = 1, drvStatusF = 'all', drvDispF = 'all', drvSearch2 = '';
+
+function renderAllDrivers() {
+  const el = document.getElementById('alldrvs-el');
+  if (!el) return;
+
+  let drvs = [...S.drivers];
+  if (drvStatusF !== 'all') drvs = drvs.filter(d => d.status === drvStatusF);
+  if (drvDispF   !== 'all') drvs = drvs.filter(d => d.dispatcherId === drvDispF);
+  if (drvSearch2) {
+    const q = drvSearch2.toLowerCase();
+    drvs = drvs.filter(d => d.name.toLowerCase().includes(q) || (d.truckNumber||'').toLowerCase().includes(q));
+  }
+
+  drvs.sort((a,b) => {
+    let av, bv;
+    if (drvSort==='name')    { av=a.name; bv=b.name; }
+    else if (drvSort==='disp') { av=(dispById(a.dispatcherId)||{name:''}).name; bv=(dispById(b.dispatcherId)||{name:''}).name; }
+    else if (drvSort==='status') { av=a.status; bv=b.status; }
+    else if (drvSort==='tenure') { av=a.hireDate||''; bv=b.hireDate||''; }
+    else if (drvSort==='rev')  { av=PERF[a.id]?PERF[a.id].av:0; bv=PERF[b.id]?PERF[b.id].av:0; return (bv-av)*drvSortDir; }
+    else if (drvSort==='pay')  { av=PERF[a.id]?PERF[a.id].ap:0; bv=PERF[b.id]?PERF[b.id].ap:0; return (bv-av)*drvSortDir; }
+    else { av=a[drvSort]||''; bv=b[drvSort]||''; }
+    return av<bv?-drvSortDir:av>bv?drvSortDir:0;
+  });
+
+  const th = (key, label) => {
+    const active = drvSort===key;
+    const arrow  = active ? (drvSortDir===1?' ↑':' ↓') : '';
+    return '<th onclick="drvSortBy(\''+key+'\')" style="cursor:pointer;user-select:none;white-space:nowrap;color:'+(active?'var(--accent)':'var(--text-2)')+'">'+label+arrow+'</th>';
+  };
+
+  el.innerHTML =
+    '<div class="archive-hdr" style="margin-bottom:14px;flex-wrap:wrap;gap:10px;">'+
+      '<div><div class="section-title">All Drivers</div><div class="section-sub">'+drvs.length+' of '+S.drivers.length+' drivers</div></div>'+
+      '<button class="btn-primary" onclick="openDrvModal(null,null)">+ Add Driver</button>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'+
+        '<input id="drv2-search" class="form-input" placeholder="Search name or truck..." value="'+drvSearch2+'" style="width:200px;padding:6px 10px;font-size:12px;" oninput="drvSearch2=this.value;renderAllDrivers()">'+
+        '<select class="select-field" onchange="drvStatusF=this.value;renderAllDrivers()">'+
+          '<option value="all">All Statuses</option>'+
+          '<option value="active"'+(drvStatusF==='active'?' selected':'')+'>Active</option>'+
+          '<option value="at_risk"'+(drvStatusF==='at_risk'?' selected':'')+'>At Risk</option>'+
+          '<option value="terminated"'+(drvStatusF==='terminated'?' selected':'')+'>Terminated</option>'+
+        '</select>'+
+        '<select class="select-field" onchange="drvDispF=this.value;renderAllDrivers()">'+
+          '<option value="all">All Dispatchers</option>'+
+          S.dispatchers.map(d=>'<option value="'+d.id+'"'+(drvDispF===d.id?' selected':'')+'>'+d.name.split(' ')[0]+'</option>').join('')+
+        '</select>'+
+      '</div>'+
+    '</div>'+
+    '<table class="archive-table">'+
+      '<thead><tr>'+
+        th('name','Driver')+th('disp','Dispatcher')+th('status','Status')+
+        '<th>Equip</th>'+th('tenure','Hire Date')+
+        '<th style="text-align:right">Tenure</th>'+
+        th('rev','Avg Rev/Wk')+th('pay','Avg Pay/Wk')+
+        '<th>Truck</th>'+
+      '</tr></thead>'+
+      '<tbody>'+
+      drvs.map(r => {
+        const disp  = dispById(r.dispatcherId);
+        const p     = PERF[r.id];
+        const col   = sColor(r.status);
+        const days  = r.hireDate && r.status!=='terminated'
+          ? Math.floor((Date.now()-new Date(r.hireDate))/86400000)
+          : r.hireDate && r.terminatedDate
+            ? Math.floor((new Date(r.terminatedDate)-new Date(r.hireDate))/86400000) : 0;
+        const payRisk = p && p.ap > 0 && p.ap < PAY_THRESHOLD;
+        return '<tr class="clickable-row" data-action="drv:'+r.id+'" style="cursor:pointer;">'+
+          '<td><strong>'+r.name+'</strong></td>'+
+          '<td style="color:var(--text-2);font-size:12px;">'+(disp?disp.name.split(' ')[0]:'<span style="color:var(--amber)">Unassigned</span>')+'</td>'+
+          '<td><span class="pill '+col+'"><span class="pill-dot"></span>'+sLabel(r.status)+'</span></td>'+
+          '<td><span class="equip-tag">'+(EQUIP_SHORT[r.equipmentType]||r.equipmentType)+'</span></td>'+
+          '<td class="mono" style="font-size:11px;color:var(--text-2);">'+(r.hireDate||'—')+'</td>'+
+          '<td class="mono" style="text-align:right;">'+(days>0?fmtTenure(days):'—')+'</td>'+
+          '<td class="mono" style="text-align:right;color:var(--accent);">'+(p?'$'+p.av.toLocaleString():'—')+'</td>'+
+          '<td class="mono" style="text-align:right;color:'+(payRisk?'var(--amber)':p&&p.ap>=1500?'var(--green)':'var(--text-1)')+';">'+(p&&p.ap>0?'$'+Math.round(p.ap).toLocaleString():'—')+'</td>'+
+          '<td class="mono" style="font-size:11px;color:var(--text-2);">'+(r.truckNumber||'—')+'</td>'+
+        '</tr>';
+      }).join('')+
+      '</tbody></table>';
+}
+
+function drvSortBy(key) {
+  if (drvSort===key) drvSortDir *= -1; else { drvSort=key; drvSortDir=1; }
+  renderAllDrivers();
+}
+
 function fleetStats() {
   const all  = S.drivers;
   const act  = all.filter(d => d.status === 'active').length;
@@ -1201,6 +1479,8 @@ function renderHeader() {
       <button class="nav-btn ${S.view==='analytics'?'active':''}" onclick="setView('analytics')">Analytics</button>
       <button class="nav-btn ${S.view==='alerts'?'active':''}"  onclick="setView('alerts')">Alerts${aBadge}</button>
       <button class="nav-btn ${S.view==='retention'?'active':''}" onclick="setView('retention')">Retention</button>
+      <button class="nav-btn ${S.view==='leaderboard'?'active':''}" onclick="setView('leaderboard')">Leaderboard</button>
+      <button class="nav-btn ${S.view==='alldrivers'?'active':''}" onclick="setView('alldrivers')">Drivers</button>
       <button class="nav-btn ${S.view==='archive'?'active':''}" onclick="setView('archive')">Archive</button>
     </nav>
     <div class="header-actions">
@@ -1255,7 +1535,13 @@ function renderStats() {
 // ============================================================
 function renderMain() {
   const el = document.getElementById('main');
-  if (S.view === 'analytics') {
+  if (S.view === 'leaderboard') {
+    el.innerHTML = `<div class="archive-wrap" id="lb-el"></div>`;
+    renderLeaderboard();
+  } else if (S.view === 'alldrivers') {
+    el.innerHTML = `<div class="archive-wrap" id="alldrvs-el"></div>`;
+    renderAllDrivers();
+  } else if (S.view === 'analytics') {
     el.innerHTML = `<div class="archive-wrap" id="analytics-el"></div>`;
     renderAnalytics();
   } else if (S.view === 'retention') {
@@ -1326,6 +1612,23 @@ function dispCard(d) {
         ${(()=>{const dp=dispPerf(d.id);return dp?`<div class="dc-stat"><span class="dc-stat-val c-accent">$${dp.avgRev.toLocaleString()}</span><span class="dc-stat-lbl">Avg Rev/Wk</span></div>`:`<div class="dc-stat"><span class="dc-stat-val">—</span><span class="dc-stat-lbl">Avg Rev/Wk</span></div>`})()}
       </div>
       ${(()=>{const dp=dispPerf(d.id);return dp?`<div style="display:flex;gap:12px;margin-bottom:10px;font-size:10px;color:var(--text-2);font-family:'DM Mono',monospace;"><span>RPTM <span style="color:var(--text-1)">${dp.avgRptm.toFixed(2)}</span></span><span>Mi/Wk <span style="color:var(--text-1)">${dp.avgMiles.toLocaleString()}</span></span><span>Gross <span style="color:var(--accent)">$${(dp.totalGross/1000).toFixed(0)}K</span></span>${dp.avgPay>0?`<span style="color:var(--amber)">Pay <span style="color:${dp.avgPay<PAY_THRESHOLD?'var(--red)':'var(--text-1)'}">$${dp.avgPay.toLocaleString()}/wk</span></span>`:''}</div>`:''})()}
+      ${(()=>{
+        const xp = calcDispXP(d.id);
+        const tier = getDispRank(xp.level);
+        return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:7px 8px;background:${tier.bg};border-radius:6px;border:1px solid ${tier.color}33;">
+          ${rankIcon(xp.level, 26)}
+          <div style="flex:1;min-width:0;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px;">
+              <span style="font-size:10px;font-weight:700;letter-spacing:.07em;color:${tier.color};font-family:'Barlow Condensed',sans-serif;">${rankSubName(xp.level).toUpperCase()}</span>
+              <span style="font-family:'DM Mono',monospace;font-size:11px;font-weight:700;color:${tier.color};">LVL ${xp.level}</span>
+            </div>
+            <div style="height:3px;background:var(--border);border-radius:99px;overflow:hidden;">
+              <div style="width:${xp.pct}%;height:100%;background:${tier.color};border-radius:99px;"></div>
+            </div>
+            ${xp.retXP!==0?`<div style="font-size:9px;margin-top:2px;font-family:'DM Mono',monospace;color:${xp.retXP>0?'var(--green)':'var(--red)'};">${xp.retXP>0?'▲ +':'▼ '}${xp.retXP} XP retention</div>`:''}
+          </div>
+        </div>`;
+      })()}
       <div class="dc-pills">
         ${s.act  ? `<span class="pill green"><span class="pill-dot"></span>${s.act} Active</span>`   : ''}
         ${s.risk ? `<span class="pill amber"><span class="pill-dot"></span>${s.risk} At Risk</span>` : ''}
