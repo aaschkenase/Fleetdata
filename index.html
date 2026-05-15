@@ -2608,6 +2608,24 @@ function handleFileSelect(inp) {
   if (file) parseWeeklyFile(file);
 }
 
+// Holds weekly data for drivers found in upload but not yet in the system
+let PENDING_UNMATCHED = []; // [{name, type, rows:[weeklyRow,...]}]
+
+function buildPerfFromRows(rows) {
+  const n = rows.length;
+  if (!n) return null;
+  return {
+    w:n, h:rows,
+    am:Math.round(rows.reduce((s,r)=>s+r[1],0)/n),
+    ar:Math.round(rows.reduce((s,r)=>s+r[2],0)/n*1000)/1000,
+    dh:Math.round(rows.reduce((s,r)=>s+r[3],0)/n*1000)/1000,
+    av:Math.round(rows.reduce((s,r)=>s+r[4],0)/n),
+    ap:Math.round(rows.reduce((s,r)=>s+r[5],0)/n),
+    tv:Math.round(rows.reduce((s,r)=>s+r[4],0)),
+    tm:Math.round(rows.reduce((s,r)=>s+r[1],0)),
+  };
+}
+
 function parseWeeklyFile(file) {
   const status = document.getElementById('upload-status');
   status.innerHTML = `<div style="color:var(--text-2);font-size:12px;">Reading file...</div>`;
@@ -2652,7 +2670,14 @@ function parseWeeklyFile(file) {
                           Math.round(sf(row[7])*100)/100];
 
           if (!did) {
-            if (!unmatched.find(u => u === name)) unmatched.push(name);
+            // Store the weekly row data so we can attach it if they add the driver
+            let pending = PENDING_UNMATCHED.find(u => u.name === name);
+            if (!pending) {
+              pending = { name, type, rows: [] };
+              PENDING_UNMATCHED.push(pending);
+              if (!unmatched.find(u => u === name)) unmatched.push(name);
+            }
+            pending.rows.push(newRow);
             continue;
           }
 
@@ -2685,7 +2710,29 @@ function parseWeeklyFile(file) {
       savePerf();
 
       const skipMsg = skippedWeeks.length ? `<div style="color:var(--amber);font-size:11px;margin-top:6px;">⚠ ${skippedWeeks.length} week(s) already in history — skipped duplicates.</div>` : '';
-      const unmMsg  = unmatched.length   ? `<div style="color:var(--text-2);font-size:11px;margin-top:8px;"><strong style="color:var(--amber);">${unmatched.length} unrecognized name(s):</strong> ${unmatched.slice(0,8).join(', ')}${unmatched.length>8?'…':''}<br>Add these drivers manually and re-upload.</div>` : '';
+      // Build quick-add rows for unmatched drivers
+      const dispOpts = S.dispatchers.map(d => '<option value="'+d.id+'">'+d.name+'</option>').join('');
+      const equipOpts = ['Flatbed','Reefer','Van','Step Deck','RGN','Conestoga','Lowboy'].map(e => '<option>'+e+'</option>').join('');
+      const unmMsg = unmatched.length ? `
+        <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">
+          <div style="font-family:'Barlow Condensed',sans-serif;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--amber);margin-bottom:8px;">
+            ⚠ ${unmatched.length} new driver${unmatched.length!==1?'s':''} not recognized — add them below
+          </div>
+          ${PENDING_UNMATCHED.map((p,i) => `
+            <div id="qa-row-${i}" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:6px;flex-wrap:wrap;">
+              <strong style="font-size:12px;min-width:160px;">${p.name.split(' ').map(w=>w.charAt(0)+w.slice(1).toLowerCase()).join(' ')}</strong>
+              <span style="font-size:10px;color:var(--text-2);background:var(--accent-dim);color:var(--accent);padding:2px 6px;border-radius:4px;">${p.type} · ${p.rows.length}wk data</span>
+              <select id="qa-disp-${i}" style="flex:1;min-width:150px;padding:4px 8px;border-radius:var(--radius);border:1px solid var(--border-hi);background:var(--card);color:var(--text-1);font-size:12px;">
+                <option value="">— Select Dispatcher —</option>
+                ${dispOpts}
+              </select>
+              <select id="qa-equip-${i}" style="padding:4px 8px;border-radius:var(--radius);border:1px solid var(--border-hi);background:var(--card);color:var(--text-1);font-size:12px;">
+                ${equipOpts}
+              </select>
+              <button onclick="quickAddFromUpload(${i})" style="padding:5px 12px;border-radius:var(--radius);border:1px solid var(--accent);background:var(--accent-dim);color:var(--accent);font-family:'Barlow Condensed',sans-serif;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;white-space:nowrap;">+ Add Driver</button>
+            </div>
+          `).join('')}
+        </div>` : '';
 
       status.innerHTML = `
         <div style="padding:12px;background:var(--green-dim);border:1px solid rgba(0,212,122,.2);border-radius:var(--radius);margin-bottom:8px;">
@@ -3138,6 +3185,50 @@ function reactivate(drvId) {
   renderStats(); renderMain();
 }
 
+
+function quickAddFromUpload(idx) {
+  const pending   = PENDING_UNMATCHED[idx];
+  if (!pending) return;
+  const dispId    = document.getElementById('qa-disp-'+idx)?.value;
+  const equip     = document.getElementById('qa-equip-'+idx)?.value || 'Flatbed';
+  if (!dispId)    { toast('Please select a dispatcher','error'); return; }
+
+  const name      = pending.name.split(' ').map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ');
+  const payType   = pending.type === 'Owner' ? 'Percentage' : 'CPM';
+  const did       = uid();
+
+  // Create driver
+  S.drivers.push({
+    id: did, name, dispatcherId: dispId,
+    driverType: pending.type, status: 'active',
+    hireDate: '', terminatedDate: '', terminationReason: '',
+    payType, payRate: '', equipmentType: equip,
+    homeState: '', truckNumber: '', trailerNumber: '',
+    notes: pending.type + ' operator — added from weekly upload',
+    _payFlagged: false, createdAt: today(),
+  });
+
+  // Attach weekly perf data
+  const perfData = buildPerfFromRows(pending.rows.slice().sort((a,b) => b[0].localeCompare(a[0])));
+  if (perfData) { PERF[did] = perfData; savePerf(); }
+
+  save();
+  computeRiskFlags();
+
+  // Update the row to show success
+  const row = document.getElementById('qa-row-'+idx);
+  if (row) {
+    const disp = dispById(dispId);
+    row.innerHTML = '<span style="color:var(--green);font-size:12px;">✓ Added</span>' +
+      '<strong style="font-size:12px;margin-left:8px;">' + name + '</strong>' +
+      '<span style="font-size:11px;color:var(--text-2);margin-left:6px;">→ ' + (disp?disp.name:'') + ' · ' + pending.rows.length + ' weeks of data attached</span>';
+  }
+
+  // Remove from pending so it doesn't double-add
+  PENDING_UNMATCHED.splice(idx, 1);
+  toast(name + ' added with ' + (perfData?perfData.w:0) + ' weeks of data', 'success');
+  renderStats();
+}
 
 // ============================================================
 //  UNASSIGNED DRIVER QUICK-ASSIGN
