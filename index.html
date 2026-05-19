@@ -709,7 +709,8 @@
     }
     .fault-btn.sel-yes   { background:var(--red);   color:#fff; border-color:var(--red); }
     .fault-btn.sel-no    { background:var(--green);  color:#07090e; border-color:var(--green); }
-    .fault-btn.sel-maybe { background:var(--amber);  color:#07090e; border-color:var(--amber); }
+    .fault-btn.sel-maybe   { background:var(--amber);  color:#07090e; border-color:var(--amber); }
+    .fault-btn.sel-company { background:var(--accent); color:#07090e; border-color:var(--accent); }
     .fault-btn:not([class*="sel-"]) { background:var(--card); color:var(--text-2); border-color:var(--border-hi); }
     .fault-btn:hover:not([class*="sel-"]) { color:var(--text-1); border-color:var(--text-2); }
 
@@ -778,6 +779,7 @@ const EQUIP_SHORT = { Flatbed:'FB', Reefer:'RF', Van:'VN', 'Step Deck':'SD', RGN
 let S = {
   dispatchers: [],
   drivers: [],
+  coordinators: [],
   sel: null,
   view: 'fleet',      // 'fleet' | 'archive' | 'alerts' | 'search' | 'analytics' | 'leaderboard' | 'alldrivers'
   drvFilter: 'all',
@@ -801,6 +803,7 @@ firebase.initializeApp({
 });
 const db        = firebase.firestore();
 const STATE_REF = db.collection('fleet').doc('state');
+const PERF_REF  = db.collection('fleet').doc('perf');
 
 function setSyncStatus(s) {
   const el = document.getElementById('sync-dot');
@@ -821,12 +824,13 @@ function setSyncStatus(s) {
 
 // save(): write localStorage immediately, sync Firestore in background
 function save() {
-  localStorage.setItem(SK, JSON.stringify({ dispatchers: S.dispatchers, drivers: S.drivers }));
+  localStorage.setItem(SK, JSON.stringify({ dispatchers: S.dispatchers, drivers: S.drivers, coordinators: S.coordinators }));
   setSyncStatus('saving');
   STATE_REF.set({
-    dispatchers: S.dispatchers,
-    drivers:     S.drivers,
-    _updated:    firebase.firestore.FieldValue.serverTimestamp()
+    dispatchers:  S.dispatchers,
+    drivers:      S.drivers,
+    coordinators: S.coordinators || [],
+    _updated:     firebase.firestore.FieldValue.serverTimestamp()
   })
   .then(() => setSyncStatus('synced'))
   .catch(e => { setSyncStatus('error'); console.error('Firestore save:', e); });
@@ -839,10 +843,11 @@ async function load() {
     const doc = await STATE_REF.get();
     if (doc.exists) {
       const d = doc.data();
-      S.dispatchers = d.dispatchers || [];
-      S.drivers     = d.drivers     || [];
+      S.dispatchers  = d.dispatchers  || [];
+      S.drivers      = d.drivers      || [];
+      S.coordinators = d.coordinators || [];
       // Keep localStorage in sync as cache
-      localStorage.setItem(SK, JSON.stringify({ dispatchers: S.dispatchers, drivers: S.drivers }));
+      localStorage.setItem(SK, JSON.stringify({ dispatchers: S.dispatchers, drivers: S.drivers, coordinators: S.coordinators }));
       setSyncStatus('synced');
     } else {
       // Nothing in Firestore yet — load localStorage or seed, then push up
@@ -856,9 +861,10 @@ async function load() {
       }
       // First-time sync: push local data up to Firestore
       await STATE_REF.set({
-        dispatchers: S.dispatchers,
-        drivers:     S.drivers,
-        _updated:    firebase.firestore.FieldValue.serverTimestamp()
+        dispatchers:  S.dispatchers,
+        drivers:      S.drivers,
+        coordinators: S.coordinators || [],
+        _updated:     firebase.firestore.FieldValue.serverTimestamp()
       });
       setSyncStatus('synced');
     }
@@ -868,23 +874,42 @@ async function load() {
     const raw = localStorage.getItem(SK);
     if (raw) {
       const p = JSON.parse(raw);
-      S.dispatchers = p.dispatchers || [];
-      S.drivers     = p.drivers     || [];
+      S.dispatchers  = p.dispatchers  || [];
+      S.drivers      = p.drivers      || [];
+      S.coordinators = p.coordinators || [];
     } else {
       seedData();
     }
   }
-  // Load PERF updates from localStorage (performance history — re-importable from Excel)
-  const rp = localStorage.getItem(SK_PERF);
-  if (rp) {
-    try { Object.assign(PERF, JSON.parse(rp)); } catch(e) {}
+  // Load PERF from Firestore first, fall back to localStorage
+  try {
+    const perfDoc = await PERF_REF.get();
+    if (perfDoc.exists && perfDoc.data().data) {
+      try {
+        const cloudPerf = JSON.parse(perfDoc.data().data);
+        Object.assign(PERF, cloudPerf);
+        localStorage.setItem(SK_PERF, perfDoc.data().data); // keep local cache fresh
+      } catch(e) { console.warn('PERF parse error:', e); }
+    } else {
+      // No cloud PERF — use localStorage fallback
+      const rp = localStorage.getItem(SK_PERF);
+      if (rp) { try { Object.assign(PERF, JSON.parse(rp)); } catch(e) {} }
+    }
+  } catch(e) {
+    // Offline — use localStorage
+    const rp = localStorage.getItem(SK_PERF);
+    if (rp) { try { Object.assign(PERF, JSON.parse(rp)); } catch(e) {} }
   }
 }
 
-// savePerf: localStorage only (PERF baseline is in code; updates are re-importable)
+// savePerf: write localStorage + sync to Firestore
 function savePerf() {
   localStorage.setItem(SK_PERF, JSON.stringify(PERF));
   computeRiskFlags();
+  // Sync to Firestore — store as string to avoid size/type issues
+  PERF_REF.set({ data: JSON.stringify(PERF), _updated: firebase.firestore.FieldValue.serverTimestamp() })
+    .then(() => setSyncStatus('synced'))
+    .catch(e => { console.warn('PERF sync error:', e); setSyncStatus('error'); });
 }
 
 function uid() {
@@ -1032,7 +1057,7 @@ function dispStats(dispId) {
   // Raw retention counts ALL terminated drivers
   const ret  = tot > 0 ? Math.round((tot - term) / tot * 100) : null;
   // Adjusted retention excludes drivers where dispatcher was NOT at fault
-  const faultTerm = all.filter(d => d.status === 'terminated' && d.dispatcherFault !== 'no').length;
+  const faultTerm = all.filter(d => d.status === 'terminated' && d.dispatcherFault !== 'no' && d.dispatcherFault !== 'company' && d.dispatcherFault !== 'coordinator').length;
   const retAdj = tot > 0 ? Math.round((tot - faultTerm) / tot * 100) : null;
   const noFaultCount = term - faultTerm;
   const unreviewed = all.filter(d => d.status === 'terminated' && !d.dispatcherFault).length;
@@ -1395,13 +1420,147 @@ function drvSortBy(key) {
   renderAllDrivers();
 }
 
+// ============================================================
+//  COORDINATOR HELPERS
+// ============================================================
+function coordById(id) { return S.coordinators.find(c => c.id === id); }
+
+function coordForDisp(dispId) {
+  return S.coordinators.find(c => c.dispatcherIds && c.dispatcherIds.includes(dispId)) || null;
+}
+
+function coordStats(coordId) {
+  const c = coordById(coordId);
+  if (!c || !c.dispatcherIds) return null;
+  const disps = c.dispatcherIds.map(id => dispById(id)).filter(Boolean);
+  const allDrivers = S.drivers.filter(d => c.dispatcherIds.includes(d.dispatcherId));
+  const active = allDrivers.filter(d => d.status !== 'terminated').length;
+  const term   = allDrivers.filter(d => d.status === 'terminated').length;
+  const tot    = allDrivers.length;
+  const faultT = allDrivers.filter(d => d.status === 'terminated' && d.dispatcherFault !== 'no' && d.dispatcherFault !== 'company' && d.dispatcherFault !== 'coordinator').length;
+  const coordFaults = allDrivers.filter(d => d.status === 'terminated' && d.dispatcherFault === 'coordinator').length;
+  const retAdj = tot > 0 ? Math.round((tot - faultT) / tot * 100) : null;
+  const perfs  = allDrivers.filter(d => d.status !== 'terminated').map(d => PERF[d.id]).filter(Boolean);
+  const avgRev = perfs.length ? Math.round(perfs.reduce((s,p) => s+p.av,0)/perfs.length) : 0;
+  const gross  = perfs.reduce((s,p) => s+p.tv, 0);
+  return { active, term, tot, retAdj, avgRev, gross, dispCount: disps.length, coordFaults };
+}
+
+// ============================================================
+//  RENDER: COORDINATOR STRIP
+// ============================================================
+function renderCoordStrip() {
+  const el = document.getElementById('coord-strip');
+  if (!el) return;
+  if (!S.coordinators || !S.coordinators.length) {
+    el.innerHTML =
+      '<div style="display:flex;align-items:center;gap:10px;padding:10px 18px;background:var(--surface);border-bottom:1px solid var(--border);">' +
+      '<span style="font-size:11px;color:var(--text-2);font-family:\'Barlow Condensed\',sans-serif;letter-spacing:.08em;text-transform:uppercase;">Driver Coordinators</span>' +
+      '<button onclick="openCoordModal()" style="padding:3px 10px;border-radius:5px;border:1px solid var(--border-hi);background:transparent;color:var(--text-2);font-family:\'Barlow Condensed\',sans-serif;font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;cursor:pointer;">+ Add Coordinator</button>' +
+      '</div>';
+    return;
+  }
+
+  const cards = S.coordinators.map(c => {
+    const s = coordStats(c.id);
+    if (!s) return '';
+    const rc = s.retAdj >= 85 ? 'var(--green)' : s.retAdj >= 70 ? 'var(--amber)' : 'var(--red)';
+    const dispNames = (c.dispatcherIds||[]).map(id => { const d=dispById(id); return d?d.name.split(' ')[0]:'?'; }).join(', ');
+    return '<div style="display:flex;align-items:center;gap:10px;padding:8px 14px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);flex-shrink:0;cursor:pointer;min-width:280px;" onclick="openCoordModal(\''+c.id+'\')">' +
+      '<div style="width:32px;height:32px;border-radius:50%;background:var(--accent-dim);border:1px solid var(--accent);display:flex;align-items:center;justify-content:center;font-family:\'Barlow Condensed\',sans-serif;font-size:13px;font-weight:700;color:var(--accent);flex-shrink:0;">'+c.name.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase()+'</div>' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="font-family:\'Barlow Condensed\',sans-serif;font-size:13px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;">'+c.name+'</div>' +
+        '<div style="font-size:10px;color:var(--text-2);margin-top:1px;">'+s.dispCount+' dispatcher'+( s.dispCount!==1?'s':'')+' · '+dispNames+'</div>' +
+      '</div>' +
+      '<div style="display:flex;gap:12px;text-align:center;flex-shrink:0;">' +
+        '<div><div style="font-family:\'DM Mono\',monospace;font-size:14px;font-weight:700;color:var(--accent);">'+s.active+'</div><div style="font-size:8px;color:var(--text-2);text-transform:uppercase;letter-spacing:.08em;">Drivers</div></div>' +
+        '<div><div style="font-family:\'DM Mono\',monospace;font-size:14px;font-weight:700;color:'+rc+';">'+(s.retAdj!==null?s.retAdj+'%':'—')+'</div><div style="font-size:8px;color:var(--text-2);text-transform:uppercase;letter-spacing:.08em;">Ret</div></div>' +
+        '<div><div style="font-family:\'DM Mono\',monospace;font-size:14px;font-weight:700;">$'+(s.avgRev?s.avgRev.toLocaleString():'—')+'</div><div style="font-size:8px;color:var(--text-2);text-transform:uppercase;letter-spacing:.08em;">Avg Rev</div></div>' +
+        (s.coordFaults > 0 ? '<div><div style="font-family:\'DM Mono\',monospace;font-size:14px;font-weight:700;color:var(--amber);">'+s.coordFaults+'</div><div style="font-size:8px;color:var(--amber);text-transform:uppercase;letter-spacing:.08em;">Faults</div></div>' : '') +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  el.innerHTML =
+    '<div style="padding:10px 18px;background:var(--surface);border-bottom:1px solid var(--border);">' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
+        '<span style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-2);font-family:\'Barlow Condensed\',sans-serif;">Driver Coordinators</span>' +
+        '<button onclick="openCoordModal()" style="padding:2px 8px;border-radius:4px;border:1px solid var(--border-hi);background:transparent;color:var(--text-2);font-family:\'Barlow Condensed\',sans-serif;font-size:9px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;cursor:pointer;">+ Add</button>' +
+      '</div>' +
+      '<div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:2px;">'+cards+'</div>' +
+    '</div>';
+}
+
+// ============================================================
+//  MODAL: ADD / EDIT COORDINATOR
+// ============================================================
+function openCoordModal(editId) {
+  const ex = editId ? coordById(editId) : null;
+  const s  = ex ? coordStats(ex.id) : null;
+  openModal(
+    '<div class="modal modal-wide"><div class="modal-header">' +
+    '<div class="modal-title">'+(ex?'Edit Coordinator':'Add Coordinator')+'</div>' +
+    '<button class="modal-close" onclick="closeModal()">&#x2715;</button></div>' +
+    '<div class="modal-body">' +
+    '<div class="form-grid">' +
+      '<div class="form-group form-full"><label class="form-label">Full Name</label>' +
+        '<input class="form-input" id="cn" value="'+(ex?ex.name:'')+'" placeholder="e.g. John Smith"></div>' +
+      '<div class="form-group"><label class="form-label">Phone</label>' +
+        '<input class="form-input" id="cp" value="'+(ex?ex.phone||'':'')+'" placeholder="312-555-0100"></div>' +
+      '<div class="form-group"><label class="form-label">Email</label>' +
+        '<input class="form-input" id="ce" value="'+(ex?ex.email||'':'')+'" placeholder="name@tagtrans.com"></div>' +
+      '<div class="form-group form-full"><label class="form-label">Dispatchers Covered</label>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:8px;padding:8px;background:var(--card);border:1px solid var(--border-hi);border-radius:var(--radius);">' +
+          S.dispatchers.map(d => {
+            const checked = ex && ex.dispatcherIds && ex.dispatcherIds.includes(d.id);
+            const assignedTo = coordForDisp(d.id);
+            const alreadyTaken = assignedTo && (!ex || assignedTo.id !== ex.id);
+            return '<label style="display:flex;align-items:center;gap:5px;padding:4px 8px;border-radius:4px;background:var(--surface);border:1px solid var(--border);cursor:pointer;font-size:12px;color:'+(alreadyTaken?'var(--text-3)':'var(--text-1)')+'">' +
+              '<input type="checkbox" id="cd-'+d.id+'" '+(checked?'checked':'')+' '+(alreadyTaken?'disabled':'')+' style="accent-color:var(--accent);">' +
+              ' '+d.name+(alreadyTaken?' (taken)':'')+'</label>';
+          }).join('') +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+    (s && s.coordFaults > 0 ? '<div style="margin-top:12px;padding:8px 12px;background:var(--amber-dim);border-radius:var(--radius);font-size:12px;color:var(--amber);">&#9888; '+s.coordFaults+' termination(s) flagged as coordinator issue</div>' : '') +
+    '</div>' +
+    '<div class="modal-footer">' +
+      (ex ? '<button class="btn-danger" onclick="deleteCoord(\''+editId+'\')">Delete</button>' : '') +
+      '<button class="btn-ghost" onclick="closeModal()">Cancel</button>' +
+      '<button class="btn-primary" onclick="saveCoord(\''+( editId||'')+'\')">Save</button>' +
+    '</div></div>'
+  );
+}
+
+function saveCoord(editId) {
+  const name = document.getElementById('cn').value.trim();
+  if (!name) { toast('Name is required','error'); return; }
+  const dispIds = S.dispatchers.filter(d => document.getElementById('cd-'+d.id)?.checked).map(d => d.id);
+  const data = { name, phone: document.getElementById('cp').value.trim(), email: document.getElementById('ce').value.trim(), dispatcherIds: dispIds };
+  if (editId) {
+    const i = S.coordinators.findIndex(c => c.id === editId);
+    if (i > -1) S.coordinators[i] = { ...S.coordinators[i], ...data };
+    toast('Coordinator updated','success');
+  } else {
+    S.coordinators.push({ id: uid(), ...data, createdAt: today() });
+    toast('Coordinator added','success');
+  }
+  save(); closeModal(); render();
+}
+
+function deleteCoord(id) {
+  if (!confirm('Remove this coordinator?')) return;
+  S.coordinators = S.coordinators.filter(c => c.id !== id);
+  save(); closeModal(); toast('Coordinator removed','info'); render();
+}
+
 function fleetStats() {
   const all  = S.drivers;
   const act  = all.filter(d => d.status === 'active').length;
   const risk = all.filter(d => d.status === 'at_risk').length;
   const term = all.filter(d => d.status === 'terminated').length;
   const tot  = all.length;
-  const faultTerm = all.filter(d => d.status === 'terminated' && d.dispatcherFault !== 'no').length;
+  const faultTerm = all.filter(d => d.status === 'terminated' && d.dispatcherFault !== 'no' && d.dispatcherFault !== 'company' && d.dispatcherFault !== 'coordinator').length;
   const ret  = tot > 0 ? Math.round((tot - term) / tot * 100) : 0;
   const retAdj = tot > 0 ? Math.round((tot - faultTerm) / tot * 100) : 0;
   const unreviewed = all.filter(d => d.status === 'terminated' && !d.dispatcherFault).length;
@@ -1484,6 +1643,7 @@ function renderHeader() {
       <button class="nav-btn ${S.view==='archive'?'active':''}" onclick="setView('archive')">Archive</button>
     </nav>
     <div class="header-actions">
+      <button onclick="forceReloadFromCloud()" title="Force reload all data from Firebase" style="padding:4px 9px;border-radius:5px;border:1px solid var(--border-hi);background:transparent;color:var(--text-2);font-family:'Barlow Condensed',sans-serif;font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;cursor:pointer;" onmouseover="this.style.color='var(--text-1)'" onmouseout="this.style.color='var(--text-2)'">&#x2601; Reload</button>
       <div style="display:flex;align-items:center;gap:6px;padding:0 4px;">
         <div id="sync-dot" style="width:7px;height:7px;border-radius:50%;background:#8aabca;flex-shrink:0;transition:background .3s;" title="Sync status"></div>
         <span id="sync-label" style="font-family:'Barlow Condensed',sans-serif;font-size:10px;font-weight:600;letter-spacing:.07em;color:#8aabca;text-transform:uppercase;transition:color .3s;">Loading</span>
@@ -1596,7 +1756,7 @@ function dispCard(d) {
         <div class="dc-avatar">${initials(d.name)}</div>
         <div style="flex:1;min-width:0;">
           <div class="dc-name">${d.name}</div>
-          <div class="dc-role">${d.role}</div>
+          <div class="dc-role">${d.role}${(()=>{const co=coordForDisp(d.id);return co?` <span style="color:var(--accent);font-size:10px;">&#183; ${co.name.split(' ')[0]}</span>`:''})()}</div>
         </div>
         <button class="dc-edit-btn" onclick="event.stopPropagation();openDispModal('${d.id}')">Edit</button>
       </div>
@@ -2328,11 +2488,12 @@ function renderRetention() {
   const faultYes  = allTerm.filter(d => d.dispatcherFault === 'yes').length;
   const faultNo   = allTerm.filter(d => d.dispatcherFault === 'no').length;
   const faultMay  = allTerm.filter(d => d.dispatcherFault === 'maybe').length;
+  const faultCo   = allTerm.filter(d => d.dispatcherFault === 'company').length;
 
   // Fleet adjusted retention
   const allDrvs   = S.drivers;
   const tot       = allDrvs.length;
-  const faultTerm = allTerm.filter(d => d.dispatcherFault !== 'no').length;
+  const faultTerm = allTerm.filter(d => d.dispatcherFault !== 'no' && d.dispatcherFault !== 'company' && d.dispatcherFault !== 'coordinator').length;
   const retAdj    = tot > 0 ? Math.round((tot - faultTerm) / tot * 100) : 0;
   const retRaw    = tot > 0 ? Math.round((tot - allTerm.length) / tot * 100) : 0;
 
@@ -2355,11 +2516,12 @@ function renderRetention() {
   if (faultF !== 'all') rows = rows.filter(d => (d.dispatcherFault||'none') === faultF);
 
   const faultBadge = (f) => {
-    const map = { yes:'fault-yes', no:'fault-no', maybe:'fault-maybe' };
-    const lbl = { yes:'Dispatcher', no:'Not Dispatcher', maybe:'Unclear' };
+    const map = { yes:'fault-yes', no:'fault-no', maybe:'fault-maybe', company:'fault-maybe', coordinator:'fault-maybe' };
+    const lbl = { yes:'Dispatcher', no:'Not Dispatcher', maybe:'Unclear', company:'Company', coordinator:'Coordinator' };
     const cls = map[f] || 'fault-none';
     const txt = lbl[f] || 'Unreviewed';
-    return `<span class="pill ${cls}">${txt}</span>`;
+    const style = f==='company' ? 'background:var(--accent-dim);color:var(--accent);border:1px solid rgba(0,196,167,.25);' : '';
+    return `<span class="pill ${cls}" style="${style}">${txt}</span>`;
   };
 
   el.innerHTML = `
@@ -2490,7 +2652,7 @@ function openRetentionReview(drvId) {
           <div style="display:flex;gap:8px;">
             <button id="fb-yes"   class="fault-btn ${fault==='yes'?'sel-yes':''}"   onclick="setFaultBtn('yes')">✗ Yes — Dispatcher</button>
             <button id="fb-no"    class="fault-btn ${fault==='no'?'sel-no':''}"     onclick="setFaultBtn('no')">✓ No — Not Fault</button>
-            <button id="fb-maybe" class="fault-btn ${fault==='maybe'?'sel-maybe':''}" onclick="setFaultBtn('maybe')">? Maybe / Unclear</button>
+            <button id="fb-maybe" class="fault-btn ${fault==='maybe'?'sel-maybe':''}" onclick="setFaultBtn('maybe')">? Maybe / Unclear</button><button id="fb-company" style="padding:5px 12px;border-radius:6px;font-family:'Barlow Condensed',sans-serif;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;border:1px solid transparent;transition:all .14s;" class="fault-btn" onclick="setFaultBtn('company')">&#127970; Company</button><button id="fb-coordinator" style="padding:5px 12px;border-radius:6px;font-family:'Barlow Condensed',sans-serif;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;border:1px solid transparent;transition:all .14s;" class="fault-btn" onclick="setFaultBtn('coordinator')">&#127919; Coordinator</button>
           </div>
           <div style="margin-top:8px;font-size:11px;color:var(--text-2);" id="fault-hint">
             ${fault === 'no' ? '✓ This termination will <strong style="color:var(--green)">NOT count</strong> against the dispatcher&#39;s retention score.' :
@@ -2521,15 +2683,14 @@ function openRetentionReview(drvId) {
 }
 
 function setFaultBtn(val) {
-  ['yes','no','maybe'].forEach(v => {
+  ['yes','no','maybe','company','coordinator'].forEach(v => {
     const btn = document.getElementById('fb-' + v);
     if (!btn) return;
     btn.className = 'fault-btn' + (v === val ? ' sel-' + v : '');
+    btn.dataset.selected = '';
   });
-  document.getElementById('fb-yes').dataset.selected = '';
-  document.getElementById('fb-no').dataset.selected  = '';
-  document.getElementById('fb-maybe').dataset.selected = '';
-  document.getElementById('fb-' + val).dataset.selected = 'true';
+  const selBtn = document.getElementById('fb-' + val);
+  if (selBtn) selBtn.dataset.selected = 'true';
   const hint = document.getElementById('fault-hint');
   if (hint) {
     hint.innerHTML = val === 'no'
@@ -2539,7 +2700,7 @@ function setFaultBtn(val) {
 }
 
 function saveRetentionReview(drvId) {
-  const selBtn = ['yes','no','maybe'].find(v => {
+  const selBtn = ['yes','no','maybe','company','coordinator'].find(v => {
     const btn = document.getElementById('fb-' + v);
     return btn && btn.dataset.selected === 'true';
   });
@@ -2553,7 +2714,8 @@ function saveRetentionReview(drvId) {
   }
   save();
   closeModal();
-  toast('Review saved' + (selBtn === 'no' ? ' — excluded from retention score' : ''), selBtn === 'no' ? 'success' : 'info');
+  const excl = selBtn === 'no' || selBtn === 'company' || selBtn === 'coordinator';
+  toast('Review saved' + (excl ? ' — excluded from dispatcher score' : ''), excl ? 'success' : 'info');
   renderStats();
   if (S.view === 'retention') renderRetention();
   else renderMain();
@@ -3323,6 +3485,39 @@ document.getElementById('modal-overlay').addEventListener('click', e => {
 // ============================================================
 //  INIT
 // ============================================================
+// ── Force reload from Firestore ──────────────────────────────
+async function forceReloadFromCloud() {
+  if (!confirm('Reload all data from Firebase? This will overwrite any unsaved local changes.')) return;
+  setSyncStatus('loading');
+  try {
+    // Reload state
+    const doc = await STATE_REF.get();
+    if (doc.exists) {
+      const d = doc.data();
+      S.dispatchers  = d.dispatchers  || [];
+      S.drivers      = d.drivers      || [];
+      S.coordinators = d.coordinators || [];
+      localStorage.setItem(SK, JSON.stringify({ dispatchers: S.dispatchers, drivers: S.drivers, coordinators: S.coordinators }));
+    }
+    // Reload PERF
+    const perfDoc = await PERF_REF.get();
+    if (perfDoc.exists && perfDoc.data().data) {
+      const cloudPerf = JSON.parse(perfDoc.data().data);
+      // Reset PERF to baseline then apply cloud data
+      Object.keys(PERF).forEach(k => delete PERF[k]);
+      Object.assign(PERF, cloudPerf);
+      localStorage.setItem(SK_PERF, perfDoc.data().data);
+    }
+    computeRiskFlags();
+    setSyncStatus('synced');
+    render();
+    toast('Reloaded from Firebase ✓', 'success');
+  } catch(e) {
+    setSyncStatus('error');
+    toast('Reload failed: ' + e.message, 'error');
+  }
+}
+
 // ── Tooltip system ──────────────────────────────────────────
 document.addEventListener('mousemove', function(e) {
   const tip = document.getElementById('chart-tip');
