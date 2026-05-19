@@ -747,7 +747,7 @@ let PERF = {"drv067":{"w":7,"am":2197,"ar":5.557,"dh":0.157,"av":8537,"ap":4413,
 
 function drvPerf(id){return PERF[id]||null;}
 function dispPerf(dispId){
-  const drvs = S.drivers.filter(d=>d.dispatcherId===dispId);
+  const drvs = S.drivers.filter(d=>d.dispatcherId===dispId && !d.excluded);
   const active = drvs.filter(d=>d.status!=='terminated');
   if(!active.length) return null;
   const ps = active.map(d=>PERF[d.id]).filter(Boolean);
@@ -1045,7 +1045,26 @@ function dispById(id) { return S.dispatchers.find(d => d.id === id); }
 function drvById(id)  { return S.drivers.find(d => d.id === id); }
 
 function drvsByDisp(dispId) {
-  return S.drivers.filter(d => d.dispatcherId === dispId);
+  return S.drivers.filter(d => d.dispatcherId === dispId && !d.excluded);
+}
+function allActiveDrivers() {
+  return S.drivers.filter(d => !d.excluded);
+}
+function toggleExclude(drvId) {
+  const i = S.drivers.findIndex(d => d.id === drvId);
+  if (i < 0) return;
+  S.drivers[i].excluded = !S.drivers[i].excluded;
+  if (S.drivers[i].excluded) {
+    // Clear any at-risk auto-flag so it doesn't show in active fleet
+    S.drivers[i]._payFlagged = false;
+  }
+  save();
+  toast(S.drivers[i].name + (S.drivers[i].excluded ? ' excluded from stats' : ' re-included in stats'),
+        S.drivers[i].excluded ? 'info' : 'success');
+  renderStats();
+  renderMain();
+  // Refresh profile if open
+  openDrvView(drvId);
 }
 
 function dispStats(dispId) {
@@ -1075,7 +1094,7 @@ function dispStats(dispId) {
 function computeRiskFlags() {
   let changed = false;
   for (const drv of S.drivers) {
-    if (drv.status === 'terminated') continue;
+    if (drv.status === 'terminated' || drv.excluded) continue;
     const p = PERF[drv.id];
     const avgPay = p ? p.ap : 0;
     const shouldBeAtRisk = avgPay > 0 && avgPay < PAY_THRESHOLD;
@@ -1176,7 +1195,7 @@ function calcDispXP(dispId) {
   const months = roleMonths[d.role] || 12;
   const tenureXP = Math.min(months * 40, 1440);
   // Active drivers
-  const active = S.drivers.filter(r => r.dispatcherId === dispId && r.status !== 'terminated').length;
+  const active = S.drivers.filter(r => r.dispatcherId === dispId && r.status !== 'terminated' && !r.excluded).length;
   const driverXP = active * 150;
   // Avg rev + miles
   const dp = dispPerf(dispId);
@@ -1433,7 +1452,7 @@ function coordStats(coordId) {
   const c = coordById(coordId);
   if (!c || !c.dispatcherIds) return null;
   const disps = c.dispatcherIds.map(id => dispById(id)).filter(Boolean);
-  const allDrivers = S.drivers.filter(d => c.dispatcherIds.includes(d.dispatcherId));
+  const allDrivers = S.drivers.filter(d => c.dispatcherIds.includes(d.dispatcherId) && !d.excluded);
   const active = allDrivers.filter(d => d.status !== 'terminated').length;
   const term   = allDrivers.filter(d => d.status === 'terminated').length;
   const tot    = allDrivers.length;
@@ -1555,7 +1574,7 @@ function deleteCoord(id) {
 }
 
 function fleetStats() {
-  const all  = S.drivers;
+  const all  = allActiveDrivers();
   const act  = all.filter(d => d.status === 'active').length;
   const risk = all.filter(d => d.status === 'at_risk').length;
   const term = all.filter(d => d.status === 'terminated').length;
@@ -1934,7 +1953,7 @@ function getExceptions() {
   const inactive = [], newDrivers = [], exceptions = [], graduated = [];
 
   for (const drv of S.drivers) {
-    if (drv.status !== 'active') continue;
+    if (drv.status !== 'active' || drv.excluded) continue;
     const p      = PERF[drv.id];
     const target = parseInt(drv.revenueTarget) || ALERT_THRESHOLD;
     const disp   = dispById(drv.dispatcherId);
@@ -2190,7 +2209,7 @@ function fleetRevByWeek() {
 
 function buildDispAnalytics() {
   return S.dispatchers.map(disp => {
-    const all    = S.drivers.filter(d => d.dispatcherId === disp.id);
+    const all    = S.drivers.filter(d => d.dispatcherId === disp.id && !d.excluded);
     const active = all.filter(d => d.status !== 'terminated');
     const term   = all.filter(d => d.status === 'terminated');
     const perfs  = active.map(d => PERF[d.id]).filter(Boolean);
@@ -2469,7 +2488,21 @@ function renderAnalytics() {
       '<div style="margin-top:10px;font-size:10px;color:var(--text-2);">'+
         '⚠ = unreviewed terminations affecting score &nbsp;·&nbsp; '+
         'Lost Rev Est = terminated drivers × avg weekly rev × 13 weeks (1-quarter projection) &nbsp;·&nbsp; '+
-        'Adj Ret excludes not-at-fault terminations'+
+        'Adj Ret excludes not-at-fault terminations'+(()=>{
+      const excDrvs = S.drivers.filter(d => d.excluded);
+      if (!excDrvs.length) return '';
+      return '<div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);">'+
+        '<div style="font-family:\'Barlow Condensed\',sans-serif;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-2);margin-bottom:10px;">Excluded Drivers ('+excDrvs.length+') — not counted in any stats</div>'+
+        '<table class="archive-table"><thead><tr><th>Driver</th><th>Dispatcher</th><th>Notes</th><th></th></tr></thead><tbody>'+
+        excDrvs.map(function(r) {
+          const disp = dispById(r.dispatcherId);
+          return '<tr><td><strong>'+r.name+'</strong></td>'+
+            '<td style="color:var(--text-2)">'+(disp?disp.name:'—')+'</td>'+
+            '<td style="color:var(--text-2);font-size:11px;">'+(r.notes||'Never showed / no loads')+'</td>'+
+            '<td><button onclick="toggleExclude(this.dataset.id)" data-id="'+r.id+'" style="padding:2px 8px;border-radius:4px;border:1px solid var(--accent);background:var(--accent-dim);color:var(--accent);font-size:9px;font-weight:700;font-family:\'Barlow Condensed\',sans-serif;cursor:pointer;text-transform:uppercase;letter-spacing:.06em;">Re-include</button></td></tr>';
+        }).join('')+
+        '</tbody></table></div>';
+    })()+
       '</div>'+
     '</div>';
 }
@@ -2482,7 +2515,8 @@ function renderRetention() {
   const el = document.getElementById('ret-el');
   if (!el) return;
 
-  const allTerm = S.drivers.filter(d => d.status === 'terminated');
+  const allTerm    = S.drivers.filter(d => d.status === 'terminated' && !d.excluded);
+  const allExcl    = S.drivers.filter(d => d.excluded);
   const reviewed  = allTerm.filter(d => d.dispatcherFault).length;
   const unrev     = allTerm.length - reviewed;
   const faultYes  = allTerm.filter(d => d.dispatcherFault === 'yes').length;
@@ -3279,6 +3313,7 @@ function openDrvView(drvId) {
         ${drvPaycheckHTML(r.id)}
         <div class="profile-actions">
           <button class="btn-ghost" onclick="openDrvModal('${r.id}')">Edit</button>
+          <button class="${r.excluded?'btn-primary':'btn-ghost'}" onclick="toggleExclude('${r.id}')" title="${r.excluded?'Re-include in all stats':'Exclude from all stats — for drivers who never showed up or got a load'}">${r.excluded?'✓ Excluded from Stats':'Exclude from Stats'}</button>
           ${r.status !== 'terminated'
             ? `<button class="btn-danger" onclick="openTermModal('${r.id}')">Terminate</button>`
             : `<button class="btn-amber"  onclick="reactivate('${r.id}')">Reactivate</button>`
