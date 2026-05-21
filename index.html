@@ -902,6 +902,8 @@ async function load() {
   }
   // Load pay config
   await loadPay();
+  // Load change log
+  await loadLogs();
 }
 
 // savePerf: write localStorage + sync to Firestore
@@ -915,11 +917,15 @@ function savePerf() {
   maybeUpdatePay();
 }
 
-// Re-render the Pay tab in-place if it's currently visible
+// Re-render Pay or Log tab in-place if currently visible
 function maybeUpdatePay() {
   if (S.view === 'pay') {
     const el = document.getElementById('pay-el');
     if (el) renderPay();
+  }
+  if (S.view === 'log') {
+    const el = document.getElementById('log-el');
+    if (el) renderLog();
   }
 }
 
@@ -968,6 +974,43 @@ async function loadPay() {
 }
 
 // ============================================================
+//  CHANGE LOG
+// ============================================================
+const SK_LOG  = 'tagtrans_chlog_v1';
+const LOG_REF = db.collection('fleet').doc('changelog');
+let CHLOG = []; // [{id, ts, type, driverId, driverName, fromDispId, fromDispName, toDispId, toDispName}]
+
+function addLog(entry) {
+  CHLOG.unshift({ id: uid(), ts: new Date().toISOString(), ...entry });
+  if (CHLOG.length > 500) CHLOG = CHLOG.slice(0, 500); // cap at 500 entries
+  saveLogs();
+  if (S.view === 'log') renderLog();
+}
+
+function saveLogs() {
+  const str = JSON.stringify(CHLOG);
+  localStorage.setItem(SK_LOG, str);
+  LOG_REF.set({ data: str, _updated: firebase.firestore.FieldValue.serverTimestamp() })
+    .catch(e => console.warn('Log sync error:', e));
+}
+
+async function loadLogs() {
+  try {
+    const doc = await LOG_REF.get();
+    if (doc.exists && doc.data().data) {
+      try { CHLOG = JSON.parse(doc.data().data); } catch(e) {}
+      localStorage.setItem(SK_LOG, doc.data().data);
+    } else {
+      const raw = localStorage.getItem(SK_LOG);
+      if (raw) { try { CHLOG = JSON.parse(raw); } catch(e) {} }
+    }
+  } catch(e) {
+    const raw = localStorage.getItem(SK_LOG);
+    if (raw) { try { CHLOG = JSON.parse(raw); } catch(e) {} }
+  }
+}
+
+// ============================================================
 //  PAY CALCULATION ENGINE
 // ============================================================
 const MILES_RATE   = 0.0175;
@@ -987,14 +1030,15 @@ function perfMonths() {
 }
 
 // Calculate one dispatcher's pay for a given month ('YYYY-MM')
+// ── Old pay formula (fleet-level RPTM, no per-driver split) ──
 function calcDispMonth(dispId, ym) {
-  const isReef = !!(PAY_CFG.reeferDisps || {})[dispId];
+  const isReef  = !!(PAY_CFG.reeferDisps || {})[dispId];
   const rates   = PAY_CFG.datRates[ym] || { flat: 2.85, reef: 3.10 };
   const datRate = isReef ? rates.reef : rates.flat;
 
   const drivers = S.drivers.filter(d => d.dispatcherId === dispId && !d.excluded);
-  let c1 = 0, c2 = 0, totalMiles = 0, qualMiles = 0;
-  const activeSet = new Set(); // C3: only drivers active in this month
+  let fleetMiles = 0, fleetRevenue = 0;
+  const activeSet = new Set();
 
   for (const drv of drivers) {
     const p = PERF[drv.id];
@@ -1002,16 +1046,9 @@ function calcDispMonth(dispId, ym) {
     for (const row of p.h) {
       if (monthKey(row[0]) !== ym) continue;
       const [, miles, rptm] = row;
-      totalMiles += miles;
-      c1 += miles * MILES_RATE;
-      const spread = rptm - datRate;
-      if (spread > 0) {
-        c2 += spread * miles * RPTM_MULT;
-        qualMiles += miles;
-      }
-      // C3: count driver only if they were not yet terminated when this month ended.
-      // If active → always count. If terminated → only count if terminatedDate is
-      // in this month or later (they were on the board for at least part of the month).
+      fleetMiles   += miles;
+      fleetRevenue += miles * rptm;
+      // C3 active count respects termination date
       const notTermByMonthEnd = drv.status !== 'terminated' ||
         !drv.terminatedDate ||
         drv.terminatedDate.slice(0, 7) >= ym;
@@ -1019,27 +1056,31 @@ function calcDispMonth(dispId, ym) {
     }
   }
 
-  const c3      = activeSet.size * BOARD_RATE;
-  const gross   = c1 + c2;
-  const bank    = gross * BANK_PCT;
-  const monthly = gross * (1 - BANK_PCT) + c3;
-  const avgSpread = qualMiles > 0 ? (c2 / (qualMiles * RPTM_MULT)) : 0;
+  const fleetRptm = fleetMiles > 0 ? fleetRevenue / fleetMiles : 0;
+  const milesPay  = fleetMiles * MILES_RATE;
+  const spread    = fleetRptm - datRate;
+  const datPay    = spread > 0 ? spread * fleetMiles * RPTM_MULT : 0;
+  const gross     = milesPay + datPay;
+  const bank      = gross * BANK_PCT;
+  const monthly   = gross * (1 - BANK_PCT);
 
-  return { c1, c2, c3, gross, bank, monthly,
-           activeDrivers: activeSet.size, totalMiles, qualMiles, datRate, avgSpread };
+  return { milesPay, datPay, gross, bank, monthly,
+           fleetRptm, fleetMiles, datRate, spread, activeDrivers: activeSet.size };
 }
 
-// YTD calculation up to and including a given month
 function calcDispYTD(dispId, upToYM) {
   const months = perfMonths().filter(m => m <= upToYM);
-  let totC1=0, totC2=0, totC3=0, totBank=0, totMonthly=0;
+  let totMiles=0, totMilesPay=0, totDatPay=0, totBank=0, totMonthly=0;
   for (const m of months) {
     const r = calcDispMonth(dispId, m);
-    totC1 += r.c1; totC2 += r.c2; totC3 += r.c3;
-    totBank += r.bank; totMonthly += r.monthly;
+    totMiles    += r.fleetMiles;
+    totMilesPay += r.milesPay;
+    totDatPay   += r.datPay;
+    totBank     += r.bank;
+    totMonthly  += r.monthly;
   }
-  return { c1:totC1, c2:totC2, c3:totC3, bank:totBank, monthly:totMonthly,
-           gross: totC1+totC2 };
+  return { fleetMiles:totMiles, milesPay:totMilesPay, datPay:totDatPay,
+           bank:totBank, monthly:totMonthly, gross:totMilesPay+totDatPay };
 }
 
 // Retention multiplier: fault departures among NEW drivers (hired >= yearStart)
@@ -1832,6 +1873,7 @@ function renderHeader() {
       <button class="nav-btn ${S.view==='alerts'?'active':''}"  onclick="setView('alerts')">Alerts${aBadge}</button>
       <button class="nav-btn ${S.view==='retention'?'active':''}" onclick="setView('retention')">Retention</button>
       <button class="nav-btn ${S.view==='pay'?'active':''}" onclick="setView('pay')">Pay</button>
+      <button class="nav-btn ${S.view==='log'?'active':''}" onclick="setView('log')">Log</button>
       <button class="nav-btn ${S.view==='leaderboard'?'active':''}" onclick="setView('leaderboard')">Leaderboard</button>
       <button class="nav-btn ${S.view==='alldrivers'?'active':''}" onclick="setView('alldrivers')">Drivers</button>
       <button class="nav-btn ${S.view==='archive'?'active':''}" onclick="setView('archive')">Archive</button>
@@ -1904,6 +1946,9 @@ function renderMain() {
   } else if (S.view === 'pay') {
     el.innerHTML = `<div class="archive-wrap" id="pay-el"></div>`;
     renderPay();
+  } else if (S.view === 'log') {
+    el.innerHTML = `<div class="archive-wrap" id="log-el"></div>`;
+    renderLog();
   } else if (S.view === 'archive') {
     el.innerHTML = `<div class="archive-wrap" id="arch-el"></div>`;
     renderArchive();
@@ -3139,24 +3184,21 @@ function renderPay() {
   const showCfg  = el.dataset.showCfg === '1';
 
   const $f   = v => '$' + Math.round(v).toLocaleString();
-  const mLbl = ym => new Date(ym+'-15').toLocaleString('en-US',{month:'short'});
+  const mLbl = ym => new Date(ym+'-15').toLocaleString('en-US',{month:'short',year:'2-digit'});
 
-  // Two-line header: label on top, formula hint below
-  const TH2 = (top, sub, align) => `<th style="padding:7px 10px;text-align:${align||'right'};border-bottom:1px solid var(--border-hi);">
-    <div style="font-size:10px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;">${top}</div>
-    <div style="font-size:9px;font-weight:400;color:var(--text-3);margin-top:1px;white-space:nowrap;">${sub}</div>
+  const TH2 = (top, sub, align) => `<th style="padding:7px 10px;text-align:${align||'right'};border-bottom:1px solid var(--border-hi);white-space:nowrap;">
+    <div style="font-size:10px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.04em;">${top}</div>
+    <div style="font-size:9px;font-weight:400;color:var(--text-3);margin-top:1px;">${sub}</div>
   </th>`;
-  // Two-line value cell: result bold on top, formula context dim below
   const TDV = (val, formula, valColor) => `<td style="padding:7px 10px;text-align:right;vertical-align:top;">
     <div style="font-size:13px;font-weight:700;color:${valColor||'var(--text-1)'};font-family:'DM Mono',monospace;">${val}</div>
-    <div style="font-size:9px;color:var(--text-3);margin-top:2px;line-height:1.4;white-space:nowrap;">${formula}</div>
+    <div style="font-size:9px;color:var(--text-3);margin-top:2px;white-space:nowrap;">${formula}</div>
   </td>`;
-  const TDL2 = (v, sub, c) => `<td style="padding:7px 10px;vertical-align:top;">
-    <div style="font-size:12px;font-weight:500;color:${c||'var(--text-1)'};">${v}</div>
+  const TDL2 = (v, sub) => `<td style="padding:7px 10px;vertical-align:top;">
+    <div style="font-size:12px;font-weight:500;color:var(--text-1);">${v}</div>
     ${sub?`<div style="font-size:9px;color:var(--text-3);margin-top:2px;">${sub}</div>`:''}
   </td>`;
-  // Simple right-aligned total cell
-  const TDT = (v, c, bold) => `<td style="padding:7px 10px;text-align:right;font-size:${bold?'13':'12'}px;font-weight:${bold?700:400};color:${c||'var(--text-1)'};font-family:'DM Mono',monospace;">${v}</td>`;
+  const TDT = (v, c) => `<td style="padding:7px 10px;text-align:right;font-size:13px;font-weight:700;color:${c||'var(--text-1)'};font-family:'DM Mono',monospace;">${v}</td>`;
 
   // ── settings panel ──
   let cfgHtml = `<button onclick="document.getElementById('pay-el').dataset.showCfg='${showCfg?0:1}';renderPay()"
@@ -3180,229 +3222,144 @@ function renderPay() {
           onchange="updateDat('${m}','reef',this.value)" placeholder="—"></td>
       </tr>`;
     }).join('');
-
     const priorRows = S.dispatchers.filter(d=>d.role==='Dispatcher'&&d.id!=='disp05'&&d.id!=='disp08').map(d => {
-      const prior = (PAY_CFG.priorDrivers||{})[d.id]||'';
       const isReef = !!(PAY_CFG.reeferDisps||{})[d.id];
       return `<tr style="border-bottom:1px solid var(--border);">
-        <td style="padding:5px 8px;font-size:12px;color:var(--text-1);">${d.name.split(' ')[0]} ${d.name.split(' ').slice(-1)[0]}</td>
-        <td style="padding:5px 8px;"><input type="number" step="1" value="${prior}"
-          style="width:60px;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--text-1);padding:3px 6px;font-size:12px;"
-          onchange="updatePrior('${d.id}',this.value)" placeholder="—"></td>
+        <td style="padding:5px 8px;font-size:12px;color:var(--text-1);">${d.name}</td>
         <td style="padding:5px 8px;"><label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;color:var(--text-2);">
           <input type="checkbox" ${isReef?'checked':''} onchange="toggleReef('${d.id}',this.checked)" style="accent-color:var(--accent);">Reefer
         </label></td>
       </tr>`;
     }).join('');
-
     cfgPanelHtml = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:12px 0 20px;">
       <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px;">
         <div style="font-weight:600;font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">Monthly DAT Rates ($/mi)</div>
         <table style="width:100%;border-collapse:collapse;">
           <thead><tr style="border-bottom:1px solid var(--border);">
-            <th style="text-align:left;padding:4px 8px;font-size:10px;color:var(--text-3);font-weight:500;">Month</th>
-            <th style="text-align:left;padding:4px 8px;font-size:10px;color:var(--text-3);font-weight:500;">Flatbed</th>
-            <th style="text-align:left;padding:4px 8px;font-size:10px;color:var(--text-3);font-weight:500;">Reefer</th>
+            <th style="text-align:left;padding:4px 8px;font-size:10px;color:var(--text-3);">Month</th>
+            <th style="text-align:left;padding:4px 8px;font-size:10px;color:var(--text-3);">Flatbed</th>
+            <th style="text-align:left;padding:4px 8px;font-size:10px;color:var(--text-3);">Reefer</th>
           </tr></thead><tbody>${rateRows}</tbody>
         </table>
       </div>
       <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px;">
-        <div style="font-weight:600;font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">2025 Avg Driver Count (Board Multiplier)</div>
-        <table style="width:100%;border-collapse:collapse;">
-          <thead><tr style="border-bottom:1px solid var(--border);">
-            <th style="text-align:left;padding:4px 8px;font-size:10px;color:var(--text-3);font-weight:500;">Dispatcher</th>
-            <th style="text-align:left;padding:4px 8px;font-size:10px;color:var(--text-3);font-weight:500;">2025 Avg</th>
-            <th style="text-align:left;padding:4px 8px;font-size:10px;color:var(--text-3);font-weight:500;">DAT</th>
-          </tr></thead><tbody>${priorRows}</tbody>
-        </table>
+        <div style="font-weight:600;font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">DAT Benchmark Type</div>
+        <table style="width:100%;border-collapse:collapse;"><tbody>${priorRows}</tbody></table>
       </div>
     </div>`;
   }
 
-  // ── per-dispatcher cards with full monthly table ──
+  // ── dispatcher cards ──
   const disps = S.dispatchers.filter(d => d.role==='Dispatcher' && d.id!=='disp05' && d.id!=='disp08');
-  let cardsHtml = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(560px,1fr));gap:20px;margin-top:20px;">';
-
-  let teamBank=0, teamPaidOut=0, teamProjBonus=0;
+  let cardsHtml = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(580px,1fr));gap:20px;margin-top:20px;">';
+  let teamPaid=0, teamBank=0;
 
   for (const disp of disps) {
-    // Build monthly rows
-    let mRows = '';
-    let ytdC1=0, ytdC2=0, ytdC3=0, ytdBank=0, ytdGross=0, ytdNet=0;
+    const isReef   = !!(PAY_CFG.reeferDisps||{})[disp.id];
+    const activeNow = S.drivers.filter(d=>d.dispatcherId===disp.id&&d.status!=='terminated'&&!d.excluded).length;
+
+    let mRows='', ytdMiles=0, ytdMilesPay=0, ytdDatPay=0, ytdBank=0, ytdNet=0;
 
     for (const ym of months) {
-      const m = calcDispMonth(disp.id, ym);
-      ytdC1+=m.c1; ytdC2+=m.c2; ytdC3+=m.c3; ytdBank+=m.bank;
-      ytdGross+=m.gross; ytdNet+=m.monthly;
+      const m       = calcDispMonth(disp.id, ym);
+      ytdMiles    += m.fleetMiles;
+      ytdMilesPay += m.milesPay;
+      ytdDatPay   += m.datPay;
+      ytdBank     += m.bank;
+      ytdNet      += m.monthly;
 
       const isLatest = ym === latestYM;
-      const tag = isLatest
-        ? `<span style="font-size:9px;background:var(--accent-dim);color:var(--accent);border-radius:3px;padding:1px 5px;margin-left:5px;vertical-align:middle;">to date</span>`
-        : '';
+      const latestTag = isLatest
+        ? `<span style="font-size:9px;background:var(--accent-dim);color:var(--accent);border-radius:3px;padding:1px 5px;margin-left:5px;vertical-align:middle;">to date</span>` : '';
       const rowBg = isLatest ? 'background:rgba(0,196,167,.04);' : '';
 
-      // C1 formula
-      const c1Formula = `${Math.round(m.totalMiles).toLocaleString()} mi × $0.0175`;
-
-      // C2 formula — show DAT rate, qualifying miles, avg spread above DAT
-      let c2Formula;
-      if (m.qualMiles > 0) {
-        c2Formula = `DAT $${m.datRate.toFixed(2)} · +$${m.avgSpread.toFixed(2)}/mi avg · ${Math.round(m.qualMiles).toLocaleString()} mi × 0.05`;
-      } else {
-        c2Formula = `No drivers above DAT $${m.datRate.toFixed(2)}/mi`;
-      }
-
-      // C3 formula
-      const c3Formula = `${m.activeDrivers} active drivers × $10/mo`;
-
-      // Gross formula
-      const grossFormula = `C1 $${Math.round(m.c1).toLocaleString()} + C2 $${Math.round(m.c2).toLocaleString()}`;
-
-      // Bank formula
-      const bankFormula = `(C1+C2) $${Math.round(m.gross).toLocaleString()} × 10%`;
-
-      // Take-home formula
-      const netFormula  = `(C1+C2) $${Math.round(m.gross).toLocaleString()} × 90% + C3 $${Math.round(m.c3).toLocaleString()}`;
-
       mRows += `<tr style="border-bottom:1px solid var(--border);${rowBg}">
-        ${TDL2(mLbl(ym)+tag, ym)}
-        ${TDV($f(m.c1), c1Formula)}
-        ${TDV($f(m.c2), c2Formula, m.c2>0?'var(--green)':'var(--text-3)')}
-        ${TDV($f(m.c3), c3Formula, 'var(--text-2)')}
-        ${TDV($f(m.gross), grossFormula, 'var(--text-1)')}
-        ${TDV('−'+$f(m.bank), bankFormula, 'var(--amber)')}
-        ${TDV($f(m.monthly), netFormula, 'var(--accent)')}
+        ${TDL2(mLbl(ym)+latestTag, ym)}
+        ${TDV($f(m.fleetMiles).replace('$',''), Math.round(m.fleetMiles).toLocaleString()+' miles', 'var(--text-2)')}
+        ${TDV(m.fleetRptm.toFixed(2), 'fleet avg $/mi', m.fleetRptm>=m.datRate?'var(--green)':'var(--red)')}
+        ${TDV(m.datRate.toFixed(2), isReef?'reefer DAT':'flatbed DAT', 'var(--text-3)')}
+        ${TDV($f(m.milesPay), Math.round(m.fleetMiles).toLocaleString()+' mi × $0.0175')}
+        ${TDV($f(m.datPay), m.spread>0?('+$'+m.spread.toFixed(2)+'/mi × '+Math.round(m.fleetMiles).toLocaleString()+' mi × 0.05'):'RPTM below DAT — $0', m.datPay>0?'var(--green)':'var(--text-3)')}
+        ${TDV($f(m.gross), '$'+Math.round(m.milesPay).toLocaleString()+' + $'+Math.round(m.datPay).toLocaleString())}
+        ${TDV('−'+$f(m.bank), '$'+Math.round(m.gross).toLocaleString()+' × 10%', 'var(--amber)')}
+        ${TDV($f(m.monthly), '$'+Math.round(m.gross).toLocaleString()+' × 90%', 'var(--accent)')}
       </tr>`;
     }
 
-    // YTD totals row (no formula detail, just bold numbers)
-    const ytdNetFormula = `(C1+C2) $${Math.round(ytdGross).toLocaleString()} × 90% + C3 $${Math.round(ytdC3).toLocaleString()}`;
+    const ytdGross = ytdMilesPay + ytdDatPay;
     mRows += `<tr style="border-top:2px solid var(--border-hi);background:var(--surface);">
-      ${TDL2('<strong style="color:var(--accent)">YTD</strong>', 'all months combined', 'var(--accent)')}
-      ${TDT($f(ytdC1), 'var(--text-2)', true)}
-      ${TDT($f(ytdC2), ytdC2>0?'var(--green)':'var(--text-3)', true)}
-      ${TDT($f(ytdC3), 'var(--text-2)', true)}
-      ${TDT($f(ytdGross), 'var(--text-1)', true)}
-      ${TDT('−'+$f(ytdBank), 'var(--amber)', true)}
-      ${TDT($f(ytdNet), 'var(--accent)', true)}
+      ${TDL2('<strong style="color:var(--accent)">YTD</strong>', 'all months')}
+      ${TDT($f(ytdMiles).replace('$',''), 'var(--text-3)')}
+      ${TDT('', 'var(--text-3)')}
+      ${TDT('', 'var(--text-3)')}
+      ${TDT($f(ytdMilesPay), 'var(--text-2)')}
+      ${TDT($f(ytdDatPay), ytdDatPay>0?'var(--green)':'var(--text-3)')}
+      ${TDT($f(ytdGross))}
+      ${TDT('−'+$f(ytdBank), 'var(--amber)')}
+      ${TDT($f(ytdNet), 'var(--accent)')}
     </tr>`;
 
-    // Multipliers
-    const rMul = retentionMult(disp.id);
-    const bMul = boardMult(disp.id);
-    const projBonus = ytdBank * rMul * bMul;
-    const faults = faultCount(disp.id);
-    const prior = (PAY_CFG.priorDrivers||{})[disp.id] || 0;
-    const current = S.drivers.filter(d=>d.dispatcherId===disp.id&&d.status!=='terminated'&&!d.excluded).length;
-    const boardDiff = current - prior;
-    const rCol = rMul>1?'var(--green)':rMul===1?'var(--text-2)':'var(--red)';
-    const bCol = bMul>1?'var(--green)':bMul===1?'var(--text-2)':'var(--amber)';
-    const projCol = projBonus>ytdBank?'var(--green)':projBonus<ytdBank?'var(--red)':'var(--text-2)';
-
-    const isReef = !!(PAY_CFG.reeferDisps||{})[disp.id];
-    const latestRates = (PAY_CFG.datRates||{})[latestYM]||{};
-    const datUsed = (isReef ? latestRates.reef : latestRates.flat) || '—';
-
-    teamBank     += ytdBank;
-    teamPaidOut  += ytdNet;
-    teamProjBonus+= projBonus;
+    teamPaid += ytdNet;
+    teamBank += ytdBank;
 
     cardsHtml += `<div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;">
-      <!-- card header -->
       <div style="padding:14px 16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);background:var(--surface);">
         <div>
           <div style="font-weight:700;font-size:14px;color:var(--text-1);">${disp.name}</div>
-          <div style="font-size:11px;color:var(--text-3);margin-top:2px;">${current} active · ${isReef?'Reefer':'Flatbed'} · DAT ${datUsed}/mi (latest month)</div>
+          <div style="font-size:11px;color:var(--text-3);margin-top:2px;">${activeNow} active drivers · ${isReef?'Reefer':'Flatbed'}</div>
         </div>
         <div style="text-align:right;">
           <div style="font-size:20px;font-weight:800;color:var(--accent);">${$f(ytdNet)}</div>
-          <div style="font-size:10px;color:var(--text-3);">YTD paid out</div>
+          <div style="font-size:10px;color:var(--text-3);">YTD take-home</div>
         </div>
       </div>
 
-      <!-- monthly table -->
       <div style="overflow-x:auto;">
-        <table style="width:100%;border-collapse:collapse;min-width:600px;">
-          <thead>
-            <tr style="background:var(--surface);">
-              ${TH2('Month','period','left')}
-              ${TH2('C1 — Miles Pay','miles × $0.0175')}
-              ${TH2('C2 — Rate Bonus','per driver · (RPTM−DAT) × mi × 0.05')}
-              ${TH2('C3 — Board Pay','active drivers × $10/mo')}
-              ${TH2('Gross','C1 + C2')}
-              ${TH2('Bank Withheld','gross × 10% held for year-end')}
-              ${TH2('Take-Home','gross × 90% + C3')}
-            </tr>
-          </thead>
+        <table style="width:100%;border-collapse:collapse;min-width:620px;">
+          <thead><tr style="background:var(--surface);">
+            ${TH2('Month','period','left')}
+            ${TH2('Fleet Miles','total dispatched')}
+            ${TH2('Fleet RPTM','weighted avg $/mi')}
+            ${TH2('DAT Rate','benchmark')}
+            ${TH2('Miles Pay','miles × $0.0175')}
+            ${TH2('DAT Pay','spread × miles × 0.05')}
+            ${TH2('Gross','miles pay + DAT pay')}
+            ${TH2('Bank','gross × 10% withheld')}
+            ${TH2('Take-Home','gross × 90%')}
+          </tr></thead>
           <tbody>${mRows}</tbody>
         </table>
       </div>
 
-      <!-- note strip -->
-      <div style="padding:7px 14px;background:var(--surface);border-top:1px solid var(--border);border-bottom:1px solid var(--border);font-size:10px;color:var(--text-3);line-height:1.6;">
-        C2 is calculated per driver — only drivers booking above the DAT rate contribute. A driver running below DAT contributes $0, not a negative. The "avg spread" and "qualifying miles" shown reflect only the contributing drivers.
-        · "To date" months are based on weeks uploaded so far and may be partial.
+      <div style="padding:7px 14px;background:var(--surface);border-top:1px solid var(--border);border-bottom:1px solid var(--border);font-size:10px;color:var(--text-3);">
+        Fleet RPTM = total fleet revenue ÷ total fleet miles (weighted average) · DAT Pay floor is $0 · Bank paid annually · "To date" months reflect weeks uploaded so far
       </div>
 
-      <!-- bonus bank projection -->
-      <div style="padding:14px 16px;">
-        <div style="font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">Year-End Bonus Bank</div>
-        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px;">
-          <div style="background:var(--surface);border-radius:var(--radius);padding:10px;text-align:center;">
-            <div style="font-size:10px;color:var(--text-3);margin-bottom:4px;">Accrued</div>
-            <div style="font-size:16px;font-weight:700;color:var(--amber);">${$f(ytdBank)}</div>
-          </div>
-          <div style="background:var(--surface);border-radius:var(--radius);padding:10px;text-align:center;">
-            <div style="font-size:10px;color:var(--text-3);margin-bottom:4px;">Retention ×${rMul.toFixed(2)}</div>
-            <div style="font-size:13px;font-weight:700;color:${rCol};">
-              ${faults===0?'0 faults ✓':faults<1.5?faults+' fault ⚠':faults+' faults ✕'}
-            </div>
-          </div>
-          <div style="background:var(--surface);border-radius:var(--radius);padding:10px;text-align:center;">
-            <div style="font-size:10px;color:var(--text-3);margin-bottom:4px;">Board ×${bMul.toFixed(2)}</div>
-            <div style="font-size:13px;font-weight:700;color:${bCol};">
-              ${boardDiff>=2?`+${boardDiff} drivers ↑`:boardDiff<=-2?`${boardDiff} drivers ↓`:`stable →`}
-            </div>
-          </div>
-          <div style="background:var(--surface);border-radius:var(--radius);padding:10px;text-align:center;border:1px solid ${projCol==='var(--green)'?'rgba(0,212,122,.2)':projCol==='var(--red)'?'rgba(255,77,77,.2)':'var(--border)'};">
-            <div style="font-size:10px;color:var(--text-3);margin-bottom:4px;">Proj. Payout</div>
-            <div style="font-size:16px;font-weight:800;color:${projCol};">${$f(projBonus)}</div>
-          </div>
+      <div style="padding:12px 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+        <div style="display:flex;gap:20px;">
+          <div><div style="font-size:10px;color:var(--text-3);">YTD Gross</div><div style="font-size:15px;font-weight:700;color:var(--text-1);">${$f(ytdGross)}</div></div>
+          <div><div style="font-size:10px;color:var(--text-3);">Bank Accrued</div><div style="font-size:15px;font-weight:700;color:var(--amber);">${$f(ytdBank)}</div></div>
+          <div><div style="font-size:10px;color:var(--text-3);">Take-Home</div><div style="font-size:15px;font-weight:700;color:var(--accent);">${$f(ytdNet)}</div></div>
         </div>
-        <div style="font-size:10px;color:var(--text-3);">
-          ${$f(ytdBank)} × ${rMul.toFixed(2)} retention × ${bMul.toFixed(2)} board = ${$f(projBonus)} projected · ${faults===0?'<span style="color:var(--green)">Earn more than base with 0 fault departures</span>':'<span style="color:var(--red)">Reduce fault departures to increase payout</span>'}
-          · <span style="color:var(--text-3);">"Latest" month = weeks uploaded to date; may be partial if not all weeks are uploaded yet</span>
-        </div>
+        <div style="font-size:11px;color:var(--text-3);">Bonus bank paid annually · 10% of gross withheld monthly</div>
       </div>
     </div>`;
   }
-
   cardsHtml += '</div>';
 
-  // ── team totals ──
   const teamHtml = `<div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px 20px;margin-top:20px;display:flex;gap:40px;align-items:center;flex-wrap:wrap;">
-    <div>
-      <div style="font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;">Team YTD Paid Out</div>
-      <div style="font-size:22px;font-weight:800;color:var(--text-1);">${$f(teamPaidOut)}</div>
-    </div>
-    <div>
-      <div style="font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;">Total Bonus Banks</div>
-      <div style="font-size:22px;font-weight:800;color:var(--amber);">${$f(teamBank)}</div>
-    </div>
-    <div>
-      <div style="font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;">Projected Team Bonus</div>
-      <div style="font-size:22px;font-weight:800;color:var(--green);">${$f(teamProjBonus)}</div>
-    </div>
-    <div style="margin-left:auto;font-size:11px;color:var(--text-3);max-width:280px;line-height:1.5;">
-      Bonus bank payout: <strong style="color:var(--text-2);">×1.25</strong> for 0 fault departures · <strong style="color:var(--text-2);">×1.00</strong> baseline · <strong style="color:var(--red);">×0.65</strong> floor at 3+
-    </div>
+    <div><div style="font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;">Team YTD Take-Home</div>
+         <div style="font-size:22px;font-weight:800;color:var(--text-1);">${$f(teamPaid)}</div></div>
+    <div><div style="font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;">Total Bonus Banks</div>
+         <div style="font-size:22px;font-weight:800;color:var(--amber);">${$f(teamBank)}</div></div>
+    <div style="margin-left:auto;font-size:11px;color:var(--text-3);">Miles Pay = miles × $0.0175 · DAT Pay = (fleet RPTM − DAT) × miles × 0.05 · Bank = 10% withheld monthly, paid year-end</div>
   </div>`;
 
   el.innerHTML = `<div class="archive-wrap">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:4px;flex-wrap:wrap;gap:8px;">
       <div>
         <div class="section-title">Dispatcher Pay</div>
-        <div class="section-sub">Per-dispatcher monthly breakdown · C1 Miles + C2 Rate Bonus (per driver, floor 0) + C3 Board · 10% withheld for year-end bonus bank</div>
+        <div class="section-sub">Current pay structure · Miles Pay + DAT Pay · 10% bonus bank withheld monthly</div>
       </div>
       ${cfgHtml}
     </div>
@@ -3411,7 +3368,6 @@ function renderPay() {
     ${teamHtml}
   </div>`;
 }
-
 // pay config mutation helpers
 function updateDat(ym, type, val) {
   if (!PAY_CFG.datRates) PAY_CFG.datRates = {};
@@ -3429,6 +3385,98 @@ function toggleReef(dispId, on) {
   if (on) PAY_CFG.reeferDisps[dispId] = true;
   else delete PAY_CFG.reeferDisps[dispId];
   savePay(); renderPay();
+}
+
+// ============================================================
+//  RENDER: CHANGE LOG
+// ============================================================
+function renderLog() {
+  const el = document.getElementById('log-el');
+  if (!el) return;
+
+  const filterDisp = el.dataset.filterDisp || 'all';
+  const $ts = ts => {
+    const d = new Date(ts);
+    return d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) +
+           ' ' + d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+  };
+
+  // Dispatcher filter buttons
+  const dispNames = ['all', ...S.dispatchers
+    .filter(d => d.role==='Dispatcher' && d.id!=='disp05')
+    .map(d => d.id)];
+  const filterBtns = dispNames.map(id => {
+    const name = id === 'all' ? 'All' : (S.dispatchers.find(d=>d.id===id)?.name?.split(' ')[0] || id);
+    const active = filterDisp === id;
+    return `<button onclick="document.getElementById('log-el').dataset.filterDisp='${id}';renderLog()"
+      style="padding:5px 12px;border-radius:6px;border:1px solid ${active?'var(--accent)':'var(--border)'};
+             background:${active?'var(--accent-dim)':'var(--card)'};
+             color:${active?'var(--accent)':'var(--text-2)'};cursor:pointer;font-size:12px;font-weight:${active?600:400}">
+      ${name}
+    </button>`;
+  }).join('');
+
+  // Filter log
+  let entries = CHLOG;
+  if (filterDisp !== 'all') {
+    entries = entries.filter(e =>
+      e.fromDispId === filterDisp || e.toDispId === filterDisp
+    );
+  }
+
+  // Type labels
+  const typeLabel = t => ({
+    dispatcher_change: 'Moved',
+    termination: 'Terminated',
+    reactivation: 'Reactivated',
+    hire: 'Added',
+  }[t] || t);
+
+  const typeColor = t => ({
+    dispatcher_change: 'var(--accent)',
+    termination: 'var(--red)',
+    reactivation: 'var(--green)',
+    hire: 'var(--green)',
+  }[t] || 'var(--text-2)');
+
+  const rows = entries.length === 0
+    ? `<div style="padding:40px;text-align:center;color:var(--text-3);font-size:13px;">No log entries yet. Driver moves will appear here.</div>`
+    : entries.map(e => {
+        const action = e.type === 'dispatcher_change'
+          ? `<span style="color:var(--text-3);">${e.fromDispName || '—'}</span>
+             <span style="color:var(--text-3);margin:0 8px;">→</span>
+             <span style="color:var(--text-1);font-weight:600;">${e.toDispName || '—'}</span>`
+          : `<span style="color:var(--text-2);">${e.terminationReason || e.notes || ''}</span>`;
+
+        return `<div style="display:grid;grid-template-columns:160px 120px 1fr;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border);align-items:center;">
+          <div style="font-size:11px;color:var(--text-3);font-family:'DM Mono',monospace;">${$ts(e.ts)}</div>
+          <div>
+            <span style="font-size:11px;font-weight:600;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:2px 7px;color:${typeColor(e.type)};">${typeLabel(e.type)}</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <span style="font-size:13px;font-weight:600;color:var(--text-1);">${e.driverName}</span>
+            ${action}
+          </div>
+        </div>`;
+      }).join('');
+
+  el.innerHTML = `<div class="archive-wrap">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px;">
+      <div>
+        <div class="section-title">Change Log</div>
+        <div class="section-sub">${CHLOG.length} total entries · driver moves, terminations, and assignments</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">${filterBtns}</div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;">
+      <div style="display:grid;grid-template-columns:160px 120px 1fr;gap:12px;padding:8px 16px;background:var(--surface);border-bottom:1px solid var(--border-hi);">
+        <div style="font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;">Timestamp</div>
+        <div style="font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;">Action</div>
+        <div style="font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;">Detail</div>
+      </div>
+      ${rows}
+    </div>
+  </div>`;
 }
 
 function render() { renderHeader(); renderStats(); renderMain(); }
@@ -3670,7 +3718,18 @@ function saveDrv(editId) {
   };
   if (editId) {
     const i = S.drivers.findIndex(d => d.id === editId);
-    if (i > -1) S.drivers[i] = { ...S.drivers[i], ...data };
+    if (i > -1) {
+      const oldDispId = S.drivers[i].dispatcherId;
+      S.drivers[i] = { ...S.drivers[i], ...data };
+      // Log if dispatcher changed
+      if (oldDispId !== disp) {
+        const fromDisp = S.dispatchers.find(d => d.id === oldDispId);
+        const toDisp   = S.dispatchers.find(d => d.id === disp);
+        addLog({ type:'dispatcher_change', driverId:editId, driverName:data.name,
+                 fromDispId: oldDispId, fromDispName: fromDisp?.name || oldDispId,
+                 toDispId: disp, toDispName: toDisp?.name || disp });
+      }
+    }
     toast('Driver updated','success');
   } else {
     S.drivers.push({ id:uid(), ...data, terminatedDate:null, terminationReason:null, createdAt:today() });
@@ -3944,10 +4003,19 @@ function openUnassignedModal() {
 function quickAssign(drvId, dispId) {
   const i = S.drivers.findIndex(d => d.id === drvId);
   if (i > -1 && dispId) {
+    const drv        = S.drivers[i];
+    const fromDispId = drv.dispatcherId;
+    const fromDisp   = S.dispatchers.find(d => d.id === fromDispId);
+    const toDisp     = S.dispatchers.find(d => d.id === dispId);
     S.drivers[i].dispatcherId = dispId;
     S.drivers[i].notes = S.drivers[i].notes.replace('Needs dispatcher. ','').replace('Needs dispatcher','').trim();
     save();
-    toast(S.drivers[i].name + ' assigned','success');
+    toast(drv.name + ' assigned to ' + (toDisp?.name || dispId), 'success');
+    if (fromDispId !== dispId) {
+      addLog({ type:'dispatcher_change', driverId:drvId, driverName:drv.name,
+               fromDispId, fromDispName: fromDisp?.name || fromDispId,
+               toDispId: dispId, toDispName: toDisp?.name || dispId });
+    }
     maybeUpdatePay();
   }
 }
