@@ -1908,7 +1908,7 @@ function renderStats() {
     </div>
     <div class="stat-item">
       <div class="stat-label">Active</div>
-      <div class="stat-value c-green">${f.act}</div>
+      <div class="stat-value c-green">${f.act + f.risk}</div>
       <div class="stat-sub">${f.risk > 0 ? `${f.risk} at risk` : 'none at risk'}</div>
     </div>
     <div class="stat-item">
@@ -2001,7 +2001,7 @@ function dispCard(d) {
       </div>
       <div class="dc-stats">
         <div class="dc-stat">
-          <span class="dc-stat-val">${s.act}</span>
+          <span class="dc-stat-val">${s.act + s.risk}</span>
           <span class="dc-stat-lbl">Active</span>
         </div>
         <div class="dc-stat" title="${s.noFaultCount > 0 ? `Raw: ${s.ret}% · ${s.noFaultCount} excl.` : 'No adjustments yet'}">
@@ -2049,14 +2049,15 @@ function renderPanel() {
   if (!d) return;
 
   let drvs = drvsByDisp(S.sel);
-  if (S.drvFilter !== 'all') drvs = drvs.filter(r => r.status === S.drvFilter);
+  if (S.drvFilter === 'active') drvs = drvs.filter(r => r.status === 'active' || r.status === 'at_risk');
+  else if (S.drvFilter !== 'all') drvs = drvs.filter(r => r.status === S.drvFilter);
 
   const cur = drvsByDisp(S.sel).filter(r => r.status !== 'terminated').length;
 
   el.innerHTML = `
     <div class="panel-header">
       <div class="panel-top-row">
-        <div class="panel-title">${d.name.split(' ')[0]}'s Drivers <span style="color:var(--green);">${drvsByDisp(S.sel).filter(r=>r.status==='active').length} active</span>${drvsByDisp(S.sel).filter(r=>r.status==='terminated').length>0?' <span style="font-size:11px;color:var(--text-2);">· '+drvsByDisp(S.sel).filter(r=>r.status==='terminated').length+' inactive</span>':''}</div>
+        <div class="panel-title">${d.name.split(' ')[0]}'s Drivers <span style="color:var(--green);">${drvsByDisp(S.sel).filter(r=>r.status==='active'||r.status==='at_risk').length} active</span>${drvsByDisp(S.sel).filter(r=>r.status==='terminated').length>0?' <span style="font-size:11px;color:var(--text-2);">· '+drvsByDisp(S.sel).filter(r=>r.status==='terminated').length+' inactive</span>':''}</div>
         <div class="panel-btn-row">
           <button class="btn-primary" style="padding:4px 9px;font-size:10px;" onclick="openDrvModal(null,'${d.id}')">+ Driver</button>
           <button class="panel-close" onclick="closePanel()">✕</button>
@@ -2067,8 +2068,9 @@ function renderPanel() {
         const nAct  = allD.filter(r=>r.status==='active').length;
         const nRisk = allD.filter(r=>r.status==='at_risk').length;
         const nTerm = allD.filter(r=>r.status==='terminated').length;
+        const nActTotal = nAct + nRisk;
         return `<div class="panel-filters">
-          <button class="filter-btn ${S.drvFilter==='active'?'active':''}"     onclick="setDrvFilter('active')">Active${nAct?' ('+nAct+')':''}</button>
+          <button class="filter-btn ${S.drvFilter==='active'?'active':''}"     onclick="setDrvFilter('active')">Active${nActTotal?' ('+nActTotal+')':''}</button>
           ${nRisk?`<button class="filter-btn ${S.drvFilter==='at_risk'?'active':''}"  onclick="setDrvFilter('at_risk')">At Risk (${nRisk})</button>`:''}
           <button class="filter-btn ${S.drvFilter==='terminated'?'active':''}" onclick="setDrvFilter('terminated')">Inactive${nTerm?' ('+nTerm+')':''}</button>
           <button class="filter-btn ${S.drvFilter==='all'?'active':''}"        onclick="setDrvFilter('all')">All</button>
