@@ -947,74 +947,150 @@ function save() {
     coordinators: S.coordinators || [],
     _updated:     firebase.firestore.FieldValue.serverTimestamp()
   })
-  .then(() => setSyncStatus('synced'))
-  .catch(e => { setSyncStatus('error'); console.error('Firestore save:', e); });
+  .then(() => { setSyncStatus('synced'); const b=document.getElementById('fb-err-banner'); if(b) b.remove(); })
+  .catch(e => { setSyncStatus('error'); showFirebaseError(e); console.error('Firestore save:', e); });
 }
 
 // load(): try Firestore first, fall back to localStorage, then seed
+// All localStorage keys we've ever used — try all on fallback
+const ALL_SKS = ['tagtrans_drm_v6','tagtrans_drm_v5','tagtrans_drm_v4'];
+const ALL_PERF_SKS = ['tagtrans_perf_v6','tagtrans_perf_v5','tagtrans_perf_v4'];
+
+function tryLocalStorage() {
+  for (const key of ALL_SKS) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const p = JSON.parse(raw);
+      if (p && p.drivers && p.drivers.length > 10) { // sanity check — real data has many drivers
+        S.dispatchers  = p.dispatchers  || [];
+        S.drivers      = p.drivers      || [];
+        S.coordinators = p.coordinators || [];
+        console.log('Loaded from localStorage key:', key, '—', S.drivers.length, 'drivers');
+        return true;
+      }
+    } catch(e) {}
+  }
+  return false;
+}
+
+function tryLocalStoragePerf() {
+  for (const key of ALL_PERF_SKS) {
+    try {
+      const rp = localStorage.getItem(key);
+      if (!rp) continue;
+      const parsed = JSON.parse(rp);
+      if (parsed && Object.keys(parsed).length > 5) {
+        Object.assign(PERF, parsed);
+        console.log('Loaded PERF from localStorage key:', key);
+        return true;
+      }
+    } catch(e) {}
+  }
+  return false;
+}
+
+function showFirebaseError(e) {
+  if (document.getElementById('fb-err-banner')) return;
+  const msg = e && e.code === 'permission-denied'
+    ? 'Firestore rules have expired — your data is not saving. Click Fix Rules to update them.'
+    : 'Firebase connection failed — showing cached data. Changes will not save to the cloud.';
+  const b = document.createElement('div');
+  b.id = 'fb-err-banner';
+  b.innerHTML =
+    '<div style="position:fixed;top:0;left:0;right:0;z-index:9999;background:#d63030;color:#fff;padding:10px 18px;'+
+    'font-family:Barlow Condensed,sans-serif;font-size:13px;font-weight:700;letter-spacing:.05em;'+
+    'display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 12px rgba(0,0,0,.4);">'+
+    '<span>&#9888; '+msg+'</span>'+
+    '<div style="display:flex;gap:8px;flex-shrink:0;">'+
+      '<button onclick="openFirestoreRulesHelper()" style="padding:4px 12px;background:#fff;color:#d63030;border:none;border-radius:4px;font-weight:700;cursor:pointer;font-size:12px;font-family:Barlow Condensed,sans-serif;">Fix Rules</button>'+
+      '<button onclick="forceReloadFromCloud()" style="padding:4px 12px;background:rgba(255,255,255,.2);color:#fff;border:1px solid rgba(255,255,255,.5);border-radius:4px;font-weight:700;cursor:pointer;font-size:12px;font-family:Barlow Condensed,sans-serif;">&#x2601; Retry</button>'+
+      '<button onclick="document.getElementById(this.dataset.bid).remove()" data-bid="fb-err-banner" style="padding:4px 8px;background:transparent;color:#fff;border:1px solid rgba(255,255,255,.4);border-radius:4px;cursor:pointer;font-size:12px;">&#x2715;</button>'+
+    '</div></div>';
+  document.body.prepend(b);
+}
+
+function openFirestoreRulesHelper() {
+  window.open('https://console.firebase.google.com/project/tagtrans-fleet/firestore/rules','_blank');
+  const rules = "rules_version = '2';\nservice cloud.firestore {\n  match /databases/{database}/documents {\n    match /fleet/{document} {\n      allow read, write: if true;\n    }\n  }\n}";
+  alert('Firestore Rules Editor opened in a new tab.\n\nPaste these rules and click Publish:\n\n'+rules+'\n\nThen come back here and click ☁ Reload.');
+}
+
 async function load() {
   setSyncStatus('loading');
+  let loadedFromFirebase = false;
+
   try {
     const doc = await STATE_REF.get();
     if (doc.exists) {
       const d = doc.data();
-      S.dispatchers  = d.dispatchers  || [];
-      S.drivers      = d.drivers      || [];
-      S.coordinators = d.coordinators || [];
-      // Keep localStorage in sync as cache
-      localStorage.setItem(SK, JSON.stringify({ dispatchers: S.dispatchers, drivers: S.drivers, coordinators: S.coordinators }));
-      setSyncStatus('synced');
-    } else {
-      // Nothing in Firestore yet — load localStorage or seed, then push up
-      const raw = localStorage.getItem(SK);
-      if (raw) {
-        const p = JSON.parse(raw);
-        S.dispatchers = p.dispatchers || [];
-        S.drivers     = p.drivers     || [];
+      const cloudDrivers = d.drivers || [];
+      // If Firebase has suspiciously few drivers it's likely stale early-sync data
+      // Use it only if it has real data (80+ drivers); otherwise treat as empty
+      if (cloudDrivers.length >= 80) {
+        S.dispatchers  = d.dispatchers  || [];
+        S.drivers      = cloudDrivers;
+        S.coordinators = d.coordinators || [];
+        localStorage.setItem(SK, JSON.stringify({ dispatchers: S.dispatchers, drivers: S.drivers, coordinators: S.coordinators }));
+        setSyncStatus('synced');
+        loadedFromFirebase = true;
       } else {
-        seedData();
+        console.warn('Firebase has only', cloudDrivers.length, 'drivers — treating as stale, re-seeding');
+        const gotLocal = tryLocalStorage();
+        if (!gotLocal) seedData();
+        await STATE_REF.set({
+          dispatchers:  S.dispatchers,
+          drivers:      S.drivers,
+          coordinators: S.coordinators || [],
+          _updated:     firebase.firestore.FieldValue.serverTimestamp()
+        });
+        localStorage.setItem(SK, JSON.stringify({ dispatchers: S.dispatchers, drivers: S.drivers, coordinators: S.coordinators }));
+        setSyncStatus('synced');
+        loadedFromFirebase = true;
       }
-      // First-time sync: push local data up to Firestore
+    } else {
+      // Nothing in Firestore — try localStorage (any version), then seed
+      const gotLocal = tryLocalStorage();
+      if (!gotLocal) seedData();
+      // Push up to Firestore as first-time sync
       await STATE_REF.set({
         dispatchers:  S.dispatchers,
         drivers:      S.drivers,
         coordinators: S.coordinators || [],
         _updated:     firebase.firestore.FieldValue.serverTimestamp()
       });
+      localStorage.setItem(SK, JSON.stringify({ dispatchers: S.dispatchers, drivers: S.drivers, coordinators: S.coordinators }));
       setSyncStatus('synced');
+      loadedFromFirebase = true;
     }
   } catch(e) {
-    // Offline or error — use localStorage
-    setSyncStatus('offline');
-    const raw = localStorage.getItem(SK);
-    if (raw) {
-      const p = JSON.parse(raw);
-      S.dispatchers  = p.dispatchers  || [];
-      S.drivers      = p.drivers      || [];
-      S.coordinators = p.coordinators || [];
-    } else {
+    console.error('Firebase load error:', e);
+    setSyncStatus('error');
+    showFirebaseError(e);
+    // Try all localStorage versions before falling to seedData
+    const gotLocal = tryLocalStorage();
+    if (!gotLocal) {
+      console.warn('No localStorage data found — loading seedData');
       seedData();
     }
   }
-  // Load PERF from Firestore first, fall back to localStorage
+
+  // Load PERF: Firebase first, then any localStorage version
   try {
     const perfDoc = await PERF_REF.get();
     if (perfDoc.exists && perfDoc.data().data) {
       try {
         const cloudPerf = JSON.parse(perfDoc.data().data);
         Object.assign(PERF, cloudPerf);
-        localStorage.setItem(SK_PERF, perfDoc.data().data); // keep local cache fresh
-      } catch(e) { console.warn('PERF parse error:', e); }
+        localStorage.setItem(SK_PERF, perfDoc.data().data);
+      } catch(e) { console.warn('PERF parse error:', e); tryLocalStoragePerf(); }
     } else {
-      // No cloud PERF — use localStorage fallback
-      const rp = localStorage.getItem(SK_PERF);
-      if (rp) { try { Object.assign(PERF, JSON.parse(rp)); } catch(e) {} }
+      tryLocalStoragePerf();
     }
   } catch(e) {
-    // Offline — use localStorage
-    const rp = localStorage.getItem(SK_PERF);
-    if (rp) { try { Object.assign(PERF, JSON.parse(rp)); } catch(e) {} }
+    tryLocalStoragePerf();
   }
+
   refreshWeekConstants();
 }
 
@@ -2000,6 +2076,7 @@ function renderHeader() {
       <button class="nav-btn ${S.view==='archive'?'active':''}" onclick="setView('archive')">Archive</button>
     </nav>
     <div class="header-actions">
+      <button onclick="resetAndSyncToFirebase()" title="Reset app to clean seed data and sync to Firebase" style="padding:4px 9px;border-radius:5px;border:1px solid var(--red);background:var(--red-dim);color:var(--red);font-family:'Barlow Condensed',sans-serif;font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;cursor:pointer;">&#x21BA; Recover</button>
       <button onclick="forceReloadFromCloud()" title="Force reload all data from Firebase" style="padding:4px 9px;border-radius:5px;border:1px solid var(--border-hi);background:transparent;color:var(--text-2);font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;cursor:pointer;" onmouseover="this.style.color='var(--text-1)'" onmouseout="this.style.color='var(--text-2)'">&#x2601; Reload</button>
       <div style="display:flex;align-items:center;gap:6px;padding:0 4px;">
         <div id="sync-dot" style="width:7px;height:7px;border-radius:50%;background:#8aabca;flex-shrink:0;transition:background .3s;" title="Sync status"></div>
@@ -4016,10 +4093,38 @@ async function forceReloadFromCloud() {
     computeRiskFlags();
     setSyncStatus('synced');
     render();
+    const b=document.getElementById('fb-err-banner'); if(b) b.remove();
     toast('Reloaded from Firebase ✓', 'success');
   } catch(e) {
     setSyncStatus('error');
     toast('Reload failed: ' + e.message, 'error');
+  }
+}
+
+
+// ── Emergency recovery: seed fresh data and push to Firebase ──
+async function resetAndSyncToFirebase() {
+  if (!confirm('This will reset the app to the built-in driver/dispatcher data and sync it to Firebase.\n\nAny changes you made through the UI (notes, retention reviews, coordinator assignments) will be lost.\n\nContinue?')) return;
+  setSyncStatus('saving');
+  seedData();
+  try {
+    await STATE_REF.set({
+      dispatchers:  S.dispatchers,
+      drivers:      S.drivers,
+      coordinators: S.coordinators || [],
+      _updated:     firebase.firestore.FieldValue.serverTimestamp()
+    });
+    localStorage.setItem(SK, JSON.stringify({ dispatchers: S.dispatchers, drivers: S.drivers, coordinators: S.coordinators }));
+    setSyncStatus('synced');
+    const b = document.getElementById('fb-err-banner');
+    if (b) b.remove();
+    toast('Data reset and synced to Firebase ✓ — ' + S.drivers.length + ' drivers, ' + S.dispatchers.length + ' dispatchers', 'success');
+    render();
+  } catch(e) {
+    setSyncStatus('error');
+    showFirebaseError(e);
+    toast('Reset locally but Firebase sync failed — fix Firestore rules first', 'error');
+    render();
   }
 }
 
