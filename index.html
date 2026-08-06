@@ -895,8 +895,7 @@ let S = {
   coordinators: [],
   sel: null,
   view: 'fleet',      // 'fleet' | 'archive' | 'alerts' | 'search' | 'analytics' | 'leaderboard' | 'alldrivers'
-  fleetSubTab: 'dispatchers', // 'dispatchers' | 'coordinators'
-  fleetSubTab: 'dispatchers', // 'dispatchers' | 'coordinators'
+  fleetSubTab: 'dispatchers', // 'dispatchers' | 'coordinators' | 'flatbed' | 'reefer'
   drvFilter: 'all',
   archDisp: 'all',
   search: '',
@@ -1720,6 +1719,13 @@ function openCoordModal(editId) {
         '<input class="form-input" id="cp" value="'+(ex?ex.phone||'':'')+'" placeholder="312-555-0100"></div>' +
       '<div class="form-group"><label class="form-label">Email</label>' +
         '<input class="form-input" id="ce" value="'+(ex?ex.email||'':'')+'" placeholder="name@tagtrans.com"></div>' +
+      '<div class="form-group"><label class="form-label">Fleet Type</label>' +
+        '<select class="form-select" id="cft">' +
+          '<option value="" '+(!ex||!ex.fleetType?'selected':'')+'>&#8212; Not Set &#8212;</option>' +
+          '<option value="Flatbed" '+(ex&&ex.fleetType==='Flatbed'?'selected':'')+'>Flatbed</option>' +
+          '<option value="Reefer" '+(ex&&ex.fleetType==='Reefer'?'selected':'')+'>Reefer</option>' +
+          '<option value="Both" '+(ex&&ex.fleetType==='Both'?'selected':'')+'>Both</option>' +
+        '</select></div>' +
       '<div class="form-group form-full"><label class="form-label">Dispatchers Covered</label>' +
         '<div style="display:flex;flex-wrap:wrap;gap:8px;padding:8px;background:var(--card);border:1px solid var(--border-hi);border-radius:var(--radius);">' +
           S.dispatchers.map(d => {
@@ -1747,7 +1753,7 @@ function saveCoord(editId) {
   const name = document.getElementById('cn').value.trim();
   if (!name) { toast('Name is required','error'); return; }
   const dispIds = S.dispatchers.filter(d => document.getElementById('cd-'+d.id)?.checked).map(d => d.id);
-  const data = { name, phone: document.getElementById('cp').value.trim(), email: document.getElementById('ce').value.trim(), dispatcherIds: dispIds };
+  const data = { name, phone: document.getElementById('cp').value.trim(), email: document.getElementById('ce').value.trim(), fleetType: document.getElementById('cft').value, dispatcherIds: dispIds };
   if (editId) {
     const i = S.coordinators.findIndex(c => c.id === editId);
     if (i > -1) S.coordinators[i] = { ...S.coordinators[i], ...data };
@@ -2054,6 +2060,13 @@ function renderHeader() {
   const exc = getExceptions();
   const excCount = exc.inactive.length + exc.newDrivers.length + exc.exceptions.length;
   const aBadge = excCount > 0 ? `<span style="display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 3px;border-radius:8px;background:var(--red);color:#fff;font-size:9px;font-weight:700;margin-left:4px;">${excCount}</span>` : '';
+
+  // Preserve search box focus + cursor position across the innerHTML rebuild below —
+  // without this, typing/clearing the search resets focus and forces a re-click every time.
+  const prevSearchInp = document.getElementById('srch-inp');
+  const hadFocus  = prevSearchInp && document.activeElement === prevSearchInp;
+  const caretPos  = hadFocus ? prevSearchInp.selectionStart : null;
+
   document.getElementById('hdr').innerHTML = `
     <div class="brand">
       <div class="brand-icon">🚛</div>
@@ -2087,6 +2100,16 @@ function renderHeader() {
       <button class="btn-primary" onclick="openDispModal()">+ Dispatcher</button>
     </div>
   `;
+
+  // Restore focus + cursor position on the new search input if it had focus before rebuild
+  if (hadFocus) {
+    const newSearchInp = document.getElementById('srch-inp');
+    if (newSearchInp) {
+      newSearchInp.focus();
+      const pos = caretPos !== null ? caretPos : newSearchInp.value.length;
+      newSearchInp.setSelectionRange(pos, pos);
+    }
+  }
 }
 
 // ============================================================
@@ -2155,6 +2178,7 @@ function renderMain() {
       el.innerHTML = `<div class="archive-wrap" id="coord-view"></div>`;
       renderCoordinators();
     } else {
+      // 'dispatchers' | 'flatbed' | 'reefer'
       el.innerHTML = `
         ${fleetSubTabBar()}
         <div class="main-layout ${S.sel ? 'panel-open' : ''}" id="ml">
@@ -2181,9 +2205,27 @@ function renderGrid() {
     </div>`;
     return;
   }
+
+  // Filter by fleet type when on the Flatbed / Reefer sub-tab
+  let dispList = S.dispatchers;
+  let scopeLabel = '';
+  if (S.fleetSubTab === 'flatbed') { dispList = S.dispatchers.filter(d=>d.fleetType==='Flatbed'); scopeLabel = 'Flatbed'; }
+  else if (S.fleetSubTab === 'reefer') { dispList = S.dispatchers.filter(d=>d.fleetType==='Reefer'); scopeLabel = 'Reefer'; }
+
+  if (scopeLabel && !dispList.length) {
+    el.innerHTML = `<div class="empty-state" style="grid-column:1/-1;height:180px;">
+      <div class="empty-icon">${scopeLabel==='Flatbed'?'🟦':'🟩'}</div>
+      <div class="empty-title">No ${scopeLabel} Dispatchers</div>
+      <div class="empty-sub">Edit a dispatcher and set Fleet Type to ${scopeLabel} to see them here</div>
+    </div>`;
+    return;
+  }
+
+  const dispIdsInView = new Set(dispList.map(d=>d.id));
   const unassigned = S.drivers.filter(d => !d.dispatcherId && d.status !== 'terminated');
-  const banner = unassigned.length ? `<div style="grid-column:1/-1;display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--amber-dim);border:1px solid rgba(245,166,35,.3);border-radius:var(--radius);margin-bottom:2px;font-size:12px;color:var(--amber);"><span style="font-size:16px;">⚠</span><strong style="margin-right:4px;">${unassigned.length} driver${unassigned.length>1?'s':''} unassigned:</strong><span style="color:var(--text-1);">${unassigned.map(d=>d.name).join(', ')}</span><button onclick="event.stopPropagation();openUnassignedModal()" style="margin-left:auto;padding:3px 10px;border-radius:5px;border:1px solid var(--amber);background:var(--amber-dim);color:var(--amber);font-family:'Barlow Condensed',sans-serif;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;">Assign →</button></div>` : '';
-  el.innerHTML = banner + S.dispatchers.map(d => dispCard(d)).join('');
+  const banner = (!scopeLabel && unassigned.length) ? `<div style="grid-column:1/-1;display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--amber-dim);border:1px solid rgba(245,166,35,.3);border-radius:var(--radius);margin-bottom:2px;font-size:12px;color:var(--amber);"><span style="font-size:16px;">⚠</span><strong style="margin-right:4px;">${unassigned.length} driver${unassigned.length>1?'s':''} unassigned:</strong><span style="color:var(--text-1);">${unassigned.map(d=>d.name).join(', ')}</span><button onclick="event.stopPropagation();openUnassignedModal()" style="margin-left:auto;padding:3px 10px;border-radius:5px;border:1px solid var(--amber);background:var(--amber-dim);color:var(--amber);font-family:'Barlow Condensed',sans-serif;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;">Assign →</button></div>` : '';
+
+  el.innerHTML = banner + dispList.map(d => dispCard(d)).join('');
 }
 
 function dispCard(d) {
@@ -2195,7 +2237,7 @@ function dispCard(d) {
       <div class="dc-header">
         <div class="dc-avatar">${initials(d.name)}</div>
         <div style="flex:1;min-width:0;">
-          <div class="dc-name">${d.name}</div>
+          <div class="dc-name">${d.name}${d.fleetType?` <span style="font-size:9px;font-weight:700;letter-spacing:.05em;padding:1px 6px;border-radius:99px;background:${d.fleetType==='Flatbed'?'rgba(75,139,212,.15)':'rgba(0,196,167,.15)'};color:${d.fleetType==='Flatbed'?'#4b8bd4':'#00c4a7'};vertical-align:middle;">${d.fleetType==='Flatbed'?'🟦':'🟩'} ${d.fleetType}</span>`:''}</div>
           <div class="dc-role">${d.role}${(()=>{const co=coordForDisp(d.id);return co?` <span style="color:var(--accent);font-size:10px;">&#183; ${co.name.split(' ')[0]}</span>`:''})()}</div>
         </div>
         <button class="dc-edit-btn" onclick="event.stopPropagation();openDispModal('${d.id}')">Edit</button>
@@ -2971,12 +3013,18 @@ function renderCoordinators() {
 }
 
 function fleetSubTabBar() {
-  var d = S.fleetSubTab==='dispatchers' ? 'active' : '';
-  var c = S.fleetSubTab==='coordinators' ? 'active' : '';
-  var n = (S.coordinators||[]).length;
+  var d  = S.fleetSubTab==='dispatchers'  ? 'active' : '';
+  var c  = S.fleetSubTab==='coordinators' ? 'active' : '';
+  var fb = S.fleetSubTab==='flatbed'      ? 'active' : '';
+  var rf = S.fleetSubTab==='reefer'       ? 'active' : '';
+  var n  = (S.coordinators||[]).length;
+  var nFb = S.dispatchers.filter(x=>x.fleetType==='Flatbed').length;
+  var nRf = S.dispatchers.filter(x=>x.fleetType==='Reefer').length;
   return '<div class="fleet-subtabs">'+
     '<button class="fleet-subtab '+d+'" data-tab="dispatchers" onclick="setFleetTab(this.dataset.tab)">Dispatchers</button>'+
     '<button class="fleet-subtab '+c+'" data-tab="coordinators" onclick="setFleetTab(this.dataset.tab)">Coordinators ('+n+')</button>'+
+    '<button class="fleet-subtab '+fb+'" data-tab="flatbed" onclick="setFleetTab(this.dataset.tab)">Flatbed ('+nFb+')</button>'+
+    '<button class="fleet-subtab '+rf+'" data-tab="reefer" onclick="setFleetTab(this.dataset.tab)">Reefer ('+nRf+')</button>'+
   '</div>';
 }
 
@@ -3014,11 +3062,15 @@ function coordCard(c) {
     ? '<div style="padding:12px 0;font-size:12px;color:var(--text-2);font-style:italic;">No dispatchers assigned yet — click Edit to assign</div>'
     : '';
 
+  const fleetBadgeColors = { Flatbed:['#4b8bd4','rgba(75,139,212,.15)','🟦'], Reefer:['#00c4a7','rgba(0,196,167,.15)','🟩'], Both:['#e8a830','rgba(232,168,48,.15)','🟦🟩'] };
+  const fbInfo = c.fleetType ? fleetBadgeColors[c.fleetType] : null;
+  const fleetBadgeHtml = fbInfo ? ' <span style="font-size:9px;font-weight:700;letter-spacing:.05em;padding:1px 6px;border-radius:99px;background:'+fbInfo[1]+';color:'+fbInfo[0]+';vertical-align:middle;">'+fbInfo[2]+' '+c.fleetType+'</span>' : '';
+
   return '<div class="coord-card">' +
     '<div class="coord-card-header">' +
       '<div class="coord-avatar">' + c.name.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase() + '</div>' +
       '<div style="flex:1;min-width:0;">' +
-        '<div class="coord-name">' + c.name + '</div>' +
+        '<div class="coord-name">' + c.name + fleetBadgeHtml + '</div>' +
         '<div style="font-size:11px;color:var(--text-2);margin-top:2px;">' +
           (c.phone ? c.phone + ' &nbsp;·&nbsp; ' : '') +
           disps.length + ' dispatcher' + (disps.length!==1?'s':'') +
@@ -3545,6 +3597,14 @@ function openDispModal(editId) {
             </select>
           </div>
           <div class="form-group">
+            <label class="form-label">Fleet Type</label>
+            <select class="form-select" id="dft">
+              <option value="" ${!ex||!ex.fleetType?'selected':''}>— Not Set —</option>
+              <option value="Flatbed" ${ex&&ex.fleetType==='Flatbed'?'selected':''}>Flatbed</option>
+              <option value="Reefer"  ${ex&&ex.fleetType==='Reefer'?'selected':''}>Reefer</option>
+            </select>
+          </div>
+          <div class="form-group">
             <label class="form-label">Phone</label>
             <input class="form-input" id="dp2" value="${ex?ex.phone||'':''}" placeholder="312-555-0100">
           </div>
@@ -3567,9 +3627,10 @@ function saveDisp(editId) {
   if (!name) { toast('Name is required','error'); return; }
   const data = {
     name,
-    role:  document.getElementById('dr').value,
-    phone: document.getElementById('dp2').value.trim(),
-    email: document.getElementById('de').value.trim(),
+    role:      document.getElementById('dr').value,
+    fleetType: document.getElementById('dft').value,
+    phone:     document.getElementById('dp2').value.trim(),
+    email:     document.getElementById('de').value.trim(),
   };
   if (editId) {
     const i = S.dispatchers.findIndex(d => d.id === editId);
