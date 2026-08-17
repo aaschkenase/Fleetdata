@@ -650,6 +650,30 @@
     }
     option { background: var(--card); color: var(--text-1); }
 
+    /* searchable driver picker (used in Import Vehicle Codes modal) */
+    .drv-picker { position: relative; }
+    .drv-picker-list {
+      display: none;
+      position: fixed;
+      background: var(--surface);
+      border: 1px solid var(--border-hi);
+      border-radius: var(--radius);
+      max-height: 260px;
+      overflow-y: auto;
+      z-index: 10000;
+      box-shadow: 0 12px 32px rgba(0,0,0,.5);
+    }
+    .drv-picker-opt {
+      padding: 7px 12px;
+      font-size: 12px;
+      color: var(--text-1);
+      cursor: pointer;
+      border-bottom: 1px solid rgba(255,255,255,.04);
+    }
+    .drv-picker-opt:last-child { border-bottom: none; }
+    .drv-picker-opt:hover, .drv-picker-opt.hl { background: var(--accent-dim); color: var(--accent); }
+    .drv-picker-empty { padding: 10px 12px; font-size: 12px; color: var(--text-2); font-style: italic; }
+
     /* fleet sub-tabs */
     .fleet-subtabs {
       display: flex; gap: 4px; padding: 10px 16px 0;
@@ -2056,6 +2080,8 @@ function planTuckInsImport() {
   return { toApply, alreadySet, sheetOnly, appOnlyActive };
 }
 
+let PICKER_CANDIDATES = [];
+
 function openTuckInsImportModal() {
   const plan = planTuckInsImport();
   const rowsHtml = plan.toApply.map(x =>
@@ -2063,13 +2089,39 @@ function openTuckInsImportModal() {
     '<td><span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:99px;background:'+VEHICLE_CODES[x.code].color+'22;color:'+VEHICLE_CODES[x.code].color+';">'+x.code+'</span></td></tr>'
   ).join('');
   const alreadyHtml = plan.alreadySet.map(x =>
-    '<tr><td>'+x.drv.name+'</td><td style="color:var(--text-2);font-size:11px;">already: '+x.drv.vehicleCode+' → sheet says: '+x.code+'</td></tr>'
+    '<tr><td>'+x.drv.name+'</td><td style="color:var(--text-2);font-size:11px;">already: '+x.drv.vehicleCode+' \u2192 sheet says: '+x.code+'</td></tr>'
   ).join('');
-  const sheetOnlyHtml = plan.sheetOnly.map(x =>
-    '<tr><td>'+x.name+'</td><td><span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:99px;background:'+VEHICLE_CODES[x.code].color+'22;color:'+VEHICLE_CODES[x.code].color+';">'+x.code+'</span></td><td style="color:var(--text-2);font-size:11px;">not in current roster</td></tr>'
+
+  // Candidate drivers for the sheet-only picker: active/at-risk, no vehicleCode yet, sorted by name
+  PICKER_CANDIDATES = S.drivers.filter(d => !d.excluded && d.status !== 'terminated' && !d.vehicleCode)
+                                .sort((a,b) => a.name.localeCompare(b.name));
+
+  // NOTE: no per-row buttons here anymore -- selections are collected and applied
+  // together in one batch via applyAllQuickAssigns(), so filling in several
+  // pickers doesn't get wiped out by an intermediate re-render.
+  // Each row is a searchable/scrollable picker instead of a native <select> --
+  // a plain <select> with 70+ names gets clipped inside this scrolling table
+  // and can't be searched by typing, so we build a small custom dropdown.
+  const sheetOnlyHtml = plan.sheetOnly.map((x,i) =>
+    '<tr data-sheet-code="'+x.code+'"><td>'+x.name+'</td>'+
+    '<td><span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:99px;background:'+VEHICLE_CODES[x.code].color+'22;color:'+VEHICLE_CODES[x.code].color+';">'+x.code+'</span></td>'+
+    '<td><div class="drv-picker">'+
+      '<input type="text" id="so-search-'+i+'" class="form-input" placeholder="Type driver name..." autocomplete="off" '+
+        'style="font-size:11px;padding:6px 8px;width:100%;min-width:170px;" '+
+        'oninput="filterDriverPicker('+i+')" onfocus="openDriverPicker('+i+')" onblur="setTimeout(function(){hideDriverPicker('+i+');},150)">'+
+      '<input type="hidden" id="so-val-'+i+'">'+
+      '<div id="so-list-'+i+'" class="drv-picker-list"></div>'+
+    '</div></td>'+
+    '</tr>'
   ).join('');
-  const appOnlyHtml = plan.appOnlyActive.map(d =>
-    '<tr><td>'+d.name+'</td><td style="color:var(--text-2);font-size:11px;">'+(dispById(d.dispatcherId)?dispById(d.dispatcherId).name:'—')+'</td></tr>'
+
+  const codeOptionsHtml = '<option value="">\u2014 Code \u2014</option>' +
+    Object.keys(VEHICLE_CODES).map(k => '<option value="'+k+'">'+k+'</option>').join('');
+  const appOnlyHtml = plan.appOnlyActive.map((d,i) =>
+    '<tr data-driver-id="'+d.id+'"><td>'+d.name+'</td>'+
+    '<td style="color:var(--text-2);font-size:11px;">'+(dispById(d.dispatcherId)?dispById(d.dispatcherId).name:'\u2014')+'</td>'+
+    '<td><select id="aa-sel-'+i+'" class="select-field" style="font-size:11px;padding:4px 6px;width:100%;">'+codeOptionsHtml+'</select></td>'+
+    '</tr>'
   ).join('');
 
   openModal(
@@ -2077,7 +2129,7 @@ function openTuckInsImportModal() {
     '<div class="modal-title">&#128667; Import Vehicle Codes</div>'+
     '<button class="modal-close" onclick="closeModal()">&#x2715;</button></div>'+
     '<div class="modal-body">'+
-    '<p style="font-size:12px;color:var(--text-2);margin-bottom:14px;line-height:1.6;">From Tuck-Ins Renewal 8-2026 sheet, cross-referenced by name against your current roster. This only sets codes for drivers who don\'t already have one — nothing else is touched.</p>'+
+    '<p style="font-size:12px;color:var(--text-2);margin-bottom:14px;line-height:1.6;">From Tuck-Ins Renewal 8-2026 sheet, cross-referenced by name against your current roster. This only sets codes for drivers who don\'t already have one \u2014 nothing else is touched.</p>'+
 
     '<div class="ret-summary-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:18px;">'+
       '<div class="ret-kpi"><div class="ret-kpi-val c-green">'+plan.toApply.length+'</div><div class="ret-kpi-lbl">Ready to Tag</div></div>'+
@@ -2087,20 +2139,21 @@ function openTuckInsImportModal() {
     '</div>'+
 
     (plan.toApply.length ? '<div class="pf-label" style="margin-bottom:8px;color:var(--green);">Will be tagged now ('+plan.toApply.length+')</div>'+
-      '<div style="max-height:180px;overflow-y:auto;margin-bottom:16px;"><table class="archive-table"><thead><tr><th>Driver</th><th>Sheet Name</th><th>Code</th></tr></thead><tbody>'+rowsHtml+'</tbody></table></div>' : '')+
+      '<div style="max-height:160px;overflow-y:auto;margin-bottom:16px;"><table class="archive-table"><thead><tr><th>Driver</th><th>Sheet Name</th><th>Code</th></tr></thead><tbody>'+rowsHtml+'</tbody></table></div>' : '')+
 
-    (plan.alreadySet.length ? '<div class="pf-label" style="margin-bottom:8px;color:var(--amber);">Already have a code — skipped ('+plan.alreadySet.length+')</div>'+
-      '<div style="max-height:120px;overflow-y:auto;margin-bottom:16px;"><table class="archive-table"><thead><tr><th>Driver</th><th>Note</th></tr></thead><tbody>'+alreadyHtml+'</tbody></table></div>' : '')+
+    (plan.alreadySet.length ? '<div class="pf-label" style="margin-bottom:8px;color:var(--amber);">Already have a code \u2014 skipped ('+plan.alreadySet.length+')</div>'+
+      '<div style="max-height:100px;overflow-y:auto;margin-bottom:16px;"><table class="archive-table"><thead><tr><th>Driver</th><th>Note</th></tr></thead><tbody>'+alreadyHtml+'</tbody></table></div>' : '')+
 
-    (plan.sheetOnly.length ? '<div class="pf-label" style="margin-bottom:8px;">On the sheet, not in your roster ('+plan.sheetOnly.length+')</div>'+
-      '<div style="max-height:160px;overflow-y:auto;margin-bottom:16px;"><table class="archive-table"><thead><tr><th>Sheet Name</th><th>Code</th><th></th></tr></thead><tbody>'+sheetOnlyHtml+'</tbody></table></div>' : '')+
+    (plan.sheetOnly.length ? '<div class="pf-label" style="margin-bottom:8px;">On the sheet, not in your roster ('+plan.sheetOnly.length+') \u2014 pick a driver for each you recognize, then Apply Selected below</div>'+
+      '<div style="max-height:220px;overflow-y:auto;margin-bottom:16px;"><table class="archive-table" id="so-table"><thead><tr><th>Sheet Name</th><th>Code</th><th>Match to Driver</th></tr></thead><tbody>'+sheetOnlyHtml+'</tbody></table></div>' : '')+
 
-    (plan.appOnlyActive.length ? '<div class="pf-label" style="margin-bottom:8px;color:var(--red);">Active drivers with no match on the sheet ('+plan.appOnlyActive.length+')</div>'+
-      '<div style="max-height:160px;overflow-y:auto;">'+
-      '<table class="archive-table"><thead><tr><th>Driver</th><th>Dispatcher</th></tr></thead><tbody>'+appOnlyHtml+'</tbody></table></div>' : '')+
+    (plan.appOnlyActive.length ? '<div class="pf-label" style="margin-bottom:8px;color:var(--red);">Active drivers with no match on the sheet ('+plan.appOnlyActive.length+') \u2014 pick a code for each, then Apply Selected below</div>'+
+      '<div style="max-height:220px;overflow-y:auto;" id="aa-table-wrap">'+
+      '<table class="archive-table" id="aa-table"><thead><tr><th>Driver</th><th>Dispatcher</th><th>Assign Code</th></tr></thead><tbody>'+appOnlyHtml+'</tbody></table></div>' : '')+
 
     '</div><div class="modal-footer">'+
       '<button class="btn-ghost" onclick="closeModal()">Cancel</button>'+
+      (plan.sheetOnly.length||plan.appOnlyActive.length ? '<button class="btn-primary" onclick="applyAllQuickAssigns()">Apply Selected</button>' : '')+
       (plan.toApply.length ? '<button class="btn-primary" onclick="applyTuckInsImport()">Tag '+plan.toApply.length+' Drivers</button>' : '')+
     '</div></div>'
   );
@@ -2117,6 +2170,103 @@ function applyTuckInsImport() {
   closeModal();
   toast(count + ' drivers tagged with vehicle codes', 'success');
   renderStats(); renderMain();
+}
+
+// Reads every dropdown currently filled in across BOTH flagged sections,
+// applies all of them in a single pass, saves ONCE, then refreshes the modal.
+// This is what lets you queue up several assignments before committing.
+function applyAllQuickAssigns() {
+  const plan = planTuckInsImport();
+  let count = 0;
+  const appliedNames = [];
+
+  // Active drivers, no sheet match -> code picked per row
+  plan.appOnlyActive.forEach((d, i) => {
+    const sel = document.getElementById('aa-sel-'+i);
+    const code = sel && sel.value;
+    if (!code) return;
+    const idx = S.drivers.findIndex(x => x.id === d.id);
+    if (idx > -1) {
+      S.drivers[idx].vehicleCode = code;
+      count++;
+      appliedNames.push(d.name);
+    }
+  });
+
+  // Sheet-only names -> matched to a driver picked per row (via the searchable picker's hidden field)
+  plan.sheetOnly.forEach((x, i) => {
+    const valEl = document.getElementById('so-val-'+i);
+    const driverId = valEl && valEl.value;
+    if (!driverId) return;
+    const idx = S.drivers.findIndex(d => d.id === driverId);
+    if (idx > -1) {
+      S.drivers[idx].vehicleCode = x.code;
+      count++;
+      appliedNames.push(S.drivers[idx].name);
+    }
+  });
+
+  if (count === 0) {
+    toast('No selections made \u2014 pick a driver or code first', 'error');
+    return;
+  }
+
+  save();
+  toast(count + ' driver' + (count!==1?'s':'') + ' tagged: ' + appliedNames.slice(0,4).join(', ') + (appliedNames.length>4?' +'+(appliedNames.length-4)+' more':''), 'success');
+  renderStats(); renderMain();
+  openTuckInsImportModal(); // refresh once, showing only what's still unresolved
+}
+
+// ── Searchable driver picker (used by the "sheet-only names" rows) ──
+// A plain <select> with 70+ names gets clipped inside the modal's scrolling
+// table and offers no type-to-search, so this is a small custom dropdown
+// instead: type to filter, click to pick, positioned with fixed coords so
+// it always renders above everything and is never clipped by an ancestor's
+// overflow-y:auto.
+function openDriverPicker(i) {
+  const input = document.getElementById('so-search-'+i);
+  const list  = document.getElementById('so-list-'+i);
+  if (!input || !list) return;
+  const r = input.getBoundingClientRect();
+  list.style.left  = r.left + 'px';
+  list.style.top   = (r.bottom + 4) + 'px';
+  list.style.width = Math.max(r.width, 220) + 'px';
+  list.style.display = 'block';
+  renderDriverPickerOptions(i, input.value);
+}
+
+function hideDriverPicker(i) {
+  const list = document.getElementById('so-list-'+i);
+  if (list) list.style.display = 'none';
+}
+
+function filterDriverPicker(i) {
+  // Any manual retyping invalidates a previous selection until they pick again
+  const valEl = document.getElementById('so-val-'+i);
+  if (valEl) valEl.value = '';
+  const input = document.getElementById('so-search-'+i);
+  renderDriverPickerOptions(i, input ? input.value : '');
+  openDriverPicker(i);
+}
+
+function renderDriverPickerOptions(i, filterText) {
+  const list = document.getElementById('so-list-'+i);
+  if (!list) return;
+  const q = (filterText||'').trim().toLowerCase();
+  const filtered = q ? PICKER_CANDIDATES.filter(d => d.name.toLowerCase().includes(q)) : PICKER_CANDIDATES;
+  list.innerHTML = filtered.length
+    ? filtered.slice(0,200).map(d => '<div class="drv-picker-opt" onclick="selectDriverPicker('+i+',\''+d.id+'\')">'+d.name+'</div>').join('')
+    : '<div class="drv-picker-empty">No matching drivers</div>';
+}
+
+function selectDriverPicker(i, driverId) {
+  const d = PICKER_CANDIDATES.find(x => x.id === driverId);
+  if (!d) return;
+  const input = document.getElementById('so-search-'+i);
+  const valEl = document.getElementById('so-val-'+i);
+  if (input) input.value = d.name;
+  if (valEl) valEl.value = d.id;
+  hideDriverPicker(i);
 }
 
 function fleetStats() {
