@@ -877,6 +877,14 @@ function dispPerf(dispId){
 
 
 const ROLES = ['Senior Load Manager','Load Manager','Dispatcher','Trainee Dispatcher','Assistant'];
+const VEHICLE_CODES = {
+  LPF: {label:'LPF — Lease Purchase, Flatbed', color:'#4b8bd4'},
+  OOF: {label:'OOF — Owner Operator, Flatbed', color:'#00c4a7'},
+  CDF: {label:'CDF — Company Driver, Flatbed', color:'#e8a830'},
+  LPR: {label:'LPR — Lease Purchase, Reefer',  color:'#7b5fc0'},
+  OOR: {label:'OOR — Owner Operator, Reefer',  color:'#00d47a'},
+  CDR: {label:'CDR — Company Driver, Reefer',  color:'#e8503a'},
+};
 const PAY_TYPES = ['CPM','Percentage','Salary','Percentage + FSC'];
 const EQUIP_TYPES = ['Flatbed','Reefer','Van','Step Deck','RGN','Conestoga','Lowboy'];
 const TERM_REASONS = ['Voluntary Quit','Abandoned Truck','Performance Issues','Medical',
@@ -1542,7 +1550,7 @@ function openRankInfoModal() {
 // ============================================================
 //  RENDER: ALL DRIVERS TABLE
 // ============================================================
-let drvSort = 'name', drvSortDir = 1, drvStatusF = 'all', drvDispF = 'all', drvSearch2 = '';
+let drvSort = 'name', drvSortDir = 1, drvStatusF = 'all', drvDispF = 'all', drvCodeF = 'all', drvSearch2 = '';
 
 function renderAllDrivers() {
   const el = document.getElementById('alldrvs-el');
@@ -1551,6 +1559,7 @@ function renderAllDrivers() {
   let drvs = [...S.drivers];
   if (drvStatusF !== 'all') drvs = drvs.filter(d => d.status === drvStatusF);
   if (drvDispF   !== 'all') drvs = drvs.filter(d => d.dispatcherId === drvDispF);
+  if (drvCodeF   !== 'all') drvs = drvs.filter(d => (d.vehicleCode||'') === drvCodeF);
   if (drvSearch2) {
     const q = drvSearch2.toLowerCase();
     drvs = drvs.filter(d => d.name.toLowerCase().includes(q) || (d.truckNumber||'').toLowerCase().includes(q));
@@ -1578,6 +1587,7 @@ function renderAllDrivers() {
     '<div class="archive-hdr" style="margin-bottom:14px;flex-wrap:wrap;gap:10px;">'+
       '<div><div class="section-title">All Drivers</div><div class="section-sub">'+drvs.length+' of '+S.drivers.length+' drivers</div></div>'+
       '<button class="btn-primary" onclick="openDrvModal(null,null)">+ Add Driver</button>'+
+      '<button class="btn-ghost" onclick="openTuckInsImportModal()">&#128667; Import Vehicle Codes</button>'+
       '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'+
         '<input id="drv2-search" class="form-input" placeholder="Search name or truck..." value="'+drvSearch2+'" style="width:200px;padding:6px 10px;font-size:12px;" oninput="drvSearch2=this.value;renderAllDrivers()">'+
         '<select class="select-field" onchange="drvStatusF=this.value;renderAllDrivers()">'+
@@ -1590,12 +1600,16 @@ function renderAllDrivers() {
           '<option value="all">All Dispatchers</option>'+
           S.dispatchers.map(d=>'<option value="'+d.id+'"'+(drvDispF===d.id?' selected':'')+'>'+d.name.split(' ')[0]+'</option>').join('')+
         '</select>'+
+        '<select class="select-field" onchange="drvCodeF=this.value;renderAllDrivers()">'+
+          '<option value="all">All Vehicle Codes</option>'+
+          Object.keys(VEHICLE_CODES).map(k=>'<option value="'+k+'"'+(drvCodeF===k?' selected':'')+'>'+k+'</option>').join('')+
+        '</select>'+
       '</div>'+
     '</div>'+
     '<table class="archive-table">'+
       '<thead><tr>'+
         th('name','Driver')+th('disp','Dispatcher')+th('status','Status')+
-        '<th>Equip</th>'+th('tenure','Hire Date')+
+        '<th>Equip</th><th>Code</th>'+th('tenure','Hire Date')+
         '<th style="text-align:right">Tenure</th>'+
         th('rev','Avg Rev/Wk')+th('pay','Avg Pay/Wk')+
         '<th>Truck</th>'+
@@ -1615,6 +1629,7 @@ function renderAllDrivers() {
           '<td style="color:var(--text-2);font-size:12px;">'+(disp?disp.name.split(' ')[0]:'<span style="color:var(--amber)">Unassigned</span>')+'</td>'+
           '<td><span class="pill '+col+'"><span class="pill-dot"></span>'+sLabel(r.status)+'</span></td>'+
           '<td><span class="equip-tag">'+(EQUIP_SHORT[r.equipmentType]||r.equipmentType)+'</span></td>'+
+          '<td>'+(r.vehicleCode&&VEHICLE_CODES[r.vehicleCode]?'<span style="font-size:10px;font-weight:700;letter-spacing:.04em;padding:2px 6px;border-radius:99px;background:'+VEHICLE_CODES[r.vehicleCode].color+'22;color:'+VEHICLE_CODES[r.vehicleCode].color+';">'+r.vehicleCode+'</span>':'<span style="color:var(--text-3);font-size:11px;">—</span>')+'</td>'+
           '<td class="mono" style="font-size:11px;color:var(--text-2);">'+(r.hireDate||'—')+'</td>'+
           '<td class="mono" style="text-align:right;">'+(days>0?fmtTenure(days):'—')+'</td>'+
           '<td class="mono" style="text-align:right;color:var(--accent);">'+(p?'$'+p.av.toLocaleString():'—')+'</td>'+
@@ -1993,6 +2008,117 @@ function saveFinBase(drvId, field, val) {
   openFinancialsModal(drvId);
 }
 
+
+// ============================================================
+//  BULK VEHICLE CODE IMPORT (from Tuck-Ins Renewal 8-2026 sheet)
+// ============================================================
+const TUCKINS_CODE_MAP = {'Adrian Clay':'LPF','Adrian Young':'LPF','Albert C. Porr':'OOF','Aleksandar Mijalkovski':'OOF','Aaron Crump':'OOF','Andres Machado':'OOF','Andrzej Rzadkosz':'OOF','Asencion Rivas':'OOF','Betsy Joseph':'OOF','Cecilia Parras':'CDF','Damian Sowa':'OOF','Daniel Davis':'LPF','David George':'CDR','Dawid J. Szyrzyna':'OOF','Devon Brown':'LPF','Domonique Robertson':'LPF','Elmer Molina':'CDR','Elree J. Cox':'OOF','Emanuel Ugarte':'OOF','Enes Marakovic':'LPR','Ernesto Veliz Bernal':'OOF','Evelet Alexis':'LPF','Francisco Martinez':'LPF','Gary Blaylock':'LPF','Hani Khamisi':'OOF','Ilyas Abdalmalik':'CDR','Iran Shaffer':'CDF','Jade Harris':'CDF','Jarel Moore':'LPF','Jason A. Perillo':'OOF','Javier Martinez':'OOF','Jeremy Catledge':'LPR','Jerkazmon Barnett':'LPF','Jesus Solis':'LPF','Jonathan Keebaugh':'LPF','Jordan Meija':'LPF','Jorge Laguna':'OOF','Jose J. Villarreal':'OOF','Macdonald Joseph':'LPR','Justin Beach':'CDF','Kimberly Walker':'LPF','Lanette Lewis':'LPR','Luis A. Flores':'LPF','Luke Bindner':'OOR','Misho Radevski':'CDF','Myrick Peterson':'CDR','Noe Urenda':'LPF','Norman Taylor':'CDF','Octavio Velazquez':'OOF','Ramy B. Abd':'CDF','Richard Goodinson':'OOR','Salvador Ugarte':'OOF','Shawn Bailey':'CDF','Stefan Mangalagiu':'OOF','Steven Martinez':'LPF','Tareq Almuhtaseb':'CDF','Troy Shavers':'CDF','Zarif Gerges':'CDF','Velzie Fuller':'OOF'};
+
+const TUCKINS_UNMATCHED_SHEET = [
+  {name:'Andrew S Driver', code:'CDF'}, {name:'Charlotte Hunt', code:'CDR'},
+  {name:'Christopher Lee', code:'LPR'}, {name:'Clifford Sheffield', code:'CDR'},
+  {name:'Ernesta 2nd Truck', code:'OOF'}, {name:'Gary L Randle', code:'CDR'},
+  {name:'Grzegorz Piatek', code:'CDF'}, {name:'Idrissa Umbereyinfura', code:'LPF'},
+  {name:'Javonte Browning', code:'OOF'}, {name:'Jeffrey Baker', code:'CDR'},
+  {name:'Jevonte Browning', code:'OOF'}, {name:'Jordan Swims', code:'CDR'},
+  {name:'Kaujee Carroll', code:'CDR'}, {name:'Keldrion Cobb', code:'CDR'},
+  {name:'Laterience Dora', code:'LPF'}, {name:'Lionel Burks', code:'CDR'},
+  {name:'Lonnie Burks', code:'CDR'}, {name:'Marco Garcia', code:'CDF'},
+  {name:'Maurice Davis', code:'CDF'}, {name:'Milad Daniel', code:'CDF'},
+  {name:'Nathan Eckhoff', code:'CDF'}, {name:'Omer Giles', code:'CDF'},
+  {name:'Quintarius Robinson', code:'OOF'}, {name:'Ralph Johnson', code:'CDF'},
+  {name:'Renardo Callaway', code:'CDF'}, {name:'Renato Velazquez', code:'LPF'},
+  {name:'Rene Padilla', code:'OOF'}, {name:'Riley Burns', code:'OOF'},
+  {name:'Timothy Carlyle', code:'CDF'}, {name:'Tyreese Johnson', code:'CDF'},
+];
+
+function normName(s) { return (s||'').toLowerCase().replace(/[^a-z]/g,''); }
+
+function planTuckInsImport() {
+  const mapByNorm = {};
+  Object.entries(TUCKINS_CODE_MAP).forEach(([n,c]) => { mapByNorm[normName(n)] = {code:c, sheetName:n}; });
+
+  const toApply = [];    // drivers we will set
+  const alreadySet = []; // drivers that already have a code (won't overwrite unless forced)
+  for (const drv of S.drivers) {
+    if (drv.excluded) continue;
+    const m = mapByNorm[normName(drv.name)];
+    if (!m) continue;
+    if (drv.vehicleCode) alreadySet.push({drv, code:m.code, sheetName:m.sheetName});
+    else toApply.push({drv, code:m.code, sheetName:m.sheetName});
+  }
+
+  const matchedNames = new Set(Object.keys(TUCKINS_CODE_MAP).map(normName));
+  const appNames = new Set(S.drivers.filter(d=>!d.excluded).map(d=>normName(d.name)));
+  const sheetOnly = TUCKINS_UNMATCHED_SHEET; // genuinely not found in app roster
+  const appOnlyActive = S.drivers.filter(d => !d.excluded && d.status !== 'terminated' && !mapByNorm[normName(d.name)]);
+
+  return { toApply, alreadySet, sheetOnly, appOnlyActive };
+}
+
+function openTuckInsImportModal() {
+  const plan = planTuckInsImport();
+  const rowsHtml = plan.toApply.map(x =>
+    '<tr><td><strong>'+x.drv.name+'</strong></td><td style="color:var(--text-2);font-size:11px;">'+x.sheetName+'</td>'+
+    '<td><span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:99px;background:'+VEHICLE_CODES[x.code].color+'22;color:'+VEHICLE_CODES[x.code].color+';">'+x.code+'</span></td></tr>'
+  ).join('');
+  const alreadyHtml = plan.alreadySet.map(x =>
+    '<tr><td>'+x.drv.name+'</td><td style="color:var(--text-2);font-size:11px;">already: '+x.drv.vehicleCode+' → sheet says: '+x.code+'</td></tr>'
+  ).join('');
+  const sheetOnlyHtml = plan.sheetOnly.map(x =>
+    '<tr><td>'+x.name+'</td><td><span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:99px;background:'+VEHICLE_CODES[x.code].color+'22;color:'+VEHICLE_CODES[x.code].color+';">'+x.code+'</span></td><td style="color:var(--text-2);font-size:11px;">not in current roster</td></tr>'
+  ).join('');
+  const appOnlyHtml = plan.appOnlyActive.map(d =>
+    '<tr><td>'+d.name+'</td><td style="color:var(--text-2);font-size:11px;">'+(dispById(d.dispatcherId)?dispById(d.dispatcherId).name:'—')+'</td></tr>'
+  ).join('');
+
+  openModal(
+    '<div class="modal modal-wide"><div class="modal-header">'+
+    '<div class="modal-title">&#128667; Import Vehicle Codes</div>'+
+    '<button class="modal-close" onclick="closeModal()">&#x2715;</button></div>'+
+    '<div class="modal-body">'+
+    '<p style="font-size:12px;color:var(--text-2);margin-bottom:14px;line-height:1.6;">From Tuck-Ins Renewal 8-2026 sheet, cross-referenced by name against your current roster. This only sets codes for drivers who don\'t already have one — nothing else is touched.</p>'+
+
+    '<div class="ret-summary-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:18px;">'+
+      '<div class="ret-kpi"><div class="ret-kpi-val c-green">'+plan.toApply.length+'</div><div class="ret-kpi-lbl">Ready to Tag</div></div>'+
+      '<div class="ret-kpi"><div class="ret-kpi-val" style="color:var(--amber);">'+plan.alreadySet.length+'</div><div class="ret-kpi-lbl">Already Tagged</div></div>'+
+      '<div class="ret-kpi"><div class="ret-kpi-val" style="color:var(--text-2);">'+plan.sheetOnly.length+'</div><div class="ret-kpi-lbl">Sheet-Only Names</div></div>'+
+      '<div class="ret-kpi"><div class="ret-kpi-val" style="color:var(--red);">'+plan.appOnlyActive.length+'</div><div class="ret-kpi-lbl">Active, No Code Found</div></div>'+
+    '</div>'+
+
+    (plan.toApply.length ? '<div class="pf-label" style="margin-bottom:8px;color:var(--green);">Will be tagged now ('+plan.toApply.length+')</div>'+
+      '<div style="max-height:180px;overflow-y:auto;margin-bottom:16px;"><table class="archive-table"><thead><tr><th>Driver</th><th>Sheet Name</th><th>Code</th></tr></thead><tbody>'+rowsHtml+'</tbody></table></div>' : '')+
+
+    (plan.alreadySet.length ? '<div class="pf-label" style="margin-bottom:8px;color:var(--amber);">Already have a code — skipped ('+plan.alreadySet.length+')</div>'+
+      '<div style="max-height:120px;overflow-y:auto;margin-bottom:16px;"><table class="archive-table"><thead><tr><th>Driver</th><th>Note</th></tr></thead><tbody>'+alreadyHtml+'</tbody></table></div>' : '')+
+
+    (plan.sheetOnly.length ? '<div class="pf-label" style="margin-bottom:8px;">On the sheet, not in your roster ('+plan.sheetOnly.length+')</div>'+
+      '<div style="max-height:160px;overflow-y:auto;margin-bottom:16px;"><table class="archive-table"><thead><tr><th>Sheet Name</th><th>Code</th><th></th></tr></thead><tbody>'+sheetOnlyHtml+'</tbody></table></div>' : '')+
+
+    (plan.appOnlyActive.length ? '<div class="pf-label" style="margin-bottom:8px;color:var(--red);">Active drivers with no match on the sheet ('+plan.appOnlyActive.length+')</div>'+
+      '<div style="max-height:160px;overflow-y:auto;">'+
+      '<table class="archive-table"><thead><tr><th>Driver</th><th>Dispatcher</th></tr></thead><tbody>'+appOnlyHtml+'</tbody></table></div>' : '')+
+
+    '</div><div class="modal-footer">'+
+      '<button class="btn-ghost" onclick="closeModal()">Cancel</button>'+
+      (plan.toApply.length ? '<button class="btn-primary" onclick="applyTuckInsImport()">Tag '+plan.toApply.length+' Drivers</button>' : '')+
+    '</div></div>'
+  );
+}
+
+function applyTuckInsImport() {
+  const plan = planTuckInsImport();
+  let count = 0;
+  for (const x of plan.toApply) {
+    const i = S.drivers.findIndex(d => d.id === x.drv.id);
+    if (i > -1) { S.drivers[i].vehicleCode = x.code; count++; }
+  }
+  save();
+  closeModal();
+  toast(count + ' drivers tagged with vehicle codes', 'success');
+  renderStats(); renderMain();
+}
+
 function fleetStats() {
   const all  = allActiveDrivers();
   const act  = all.filter(d => d.status === 'active').length;
@@ -2336,7 +2462,7 @@ function drvCard(r) {
   return `
     <div class="driver-card" onclick="openDrvView('${r.id}')">
       <div class="drv-top">
-        <span class="drv-name">${r.name}</span>
+        <span class="drv-name">${r.name}${r.vehicleCode&&VEHICLE_CODES[r.vehicleCode]?` <span style="font-size:9px;font-weight:700;letter-spacing:.04em;padding:1px 5px;border-radius:99px;background:${VEHICLE_CODES[r.vehicleCode].color}22;color:${VEHICLE_CODES[r.vehicleCode].color};vertical-align:middle;">${r.vehicleCode}</span>`:''}</span>
         <span class="pill ${col}"><span class="pill-dot"></span>${sLabel(r.status)}</span>
       </div>
       <div class="drv-meta">
@@ -3746,6 +3872,14 @@ function openDrvModal(editId, defaultDispId) {
           </div>
 
           <div class="form-group form-full">
+            <label class="form-label">Vehicle Code</label>
+            <select class="form-select" id="vvc">
+              <option value="">— Not Set —</option>
+              ${Object.entries(VEHICLE_CODES).map(([k,v])=>`<option value="${k}" ${ex&&ex.vehicleCode===k?'selected':''}>${v.label}</option>`).join('')}
+            </select>
+          </div>
+
+          <div class="form-group form-full">
             <label class="form-label">Notes / Flags</label>
             <textarea class="form-textarea" id="vno" placeholder="Performance notes, red flags, anything relevant...">${ex?ex.notes||'':''}</textarea>
           </div>
@@ -3788,6 +3922,7 @@ function saveDrv(editId) {
     payRate:       document.getElementById('vpr').value.trim(),
     truckNumber:   document.getElementById('vtk').value.trim(),
     trailerNumber: document.getElementById('vtr').value.trim(),
+    vehicleCode:   document.getElementById('vvc')?.value || '',
     notes:         document.getElementById('vno').value.trim(),
     revenueTarget: document.getElementById('vrt')?.value.trim() || '',
   };
