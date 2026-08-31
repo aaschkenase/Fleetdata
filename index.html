@@ -950,7 +950,8 @@ let S = {
   drivers: [],
   coordinators: [],
   sel: null,
-  view: 'today',      // 'today' | 'fleet' | 'archive' | 'alerts' | 'search' | 'analytics' | 'leaderboard' | 'alldrivers'
+  view: 'fleet',      // 'fleet' | 'today' | 'archive' | 'alerts' | 'search' | 'analytics' | 'leaderboard' | 'alldrivers'
+  todayChecks: {},    // { 'YYYY-MM-DD': { 'category:id': true } } -- resets naturally each new day
   fleetSubTab: 'dispatchers', // 'dispatchers' | 'coordinators' | 'flatbed' | 'reefer'
   drvFilter: 'all',
   archDisp: 'all',
@@ -994,12 +995,13 @@ function setSyncStatus(s) {
 
 // save(): write localStorage immediately, sync Firestore in background
 function save() {
-  localStorage.setItem(SK, JSON.stringify({ dispatchers: S.dispatchers, drivers: S.drivers, coordinators: S.coordinators }));
+  localStorage.setItem(SK, JSON.stringify({ dispatchers: S.dispatchers, drivers: S.drivers, coordinators: S.coordinators, todayChecks: S.todayChecks }));
   setSyncStatus('saving');
   STATE_REF.set({
     dispatchers:  S.dispatchers,
     drivers:      S.drivers,
     coordinators: S.coordinators || [],
+    todayChecks:  S.todayChecks || {},
     _updated:     firebase.firestore.FieldValue.serverTimestamp()
   })
   .then(() => { setSyncStatus('synced'); const b=document.getElementById('fb-err-banner'); if(b) b.remove(); })
@@ -1021,6 +1023,7 @@ function tryLocalStorage() {
         S.dispatchers  = p.dispatchers  || [];
         S.drivers      = p.drivers      || [];
         S.coordinators = p.coordinators || [];
+        S.todayChecks  = p.todayChecks  || {};
         console.log('Loaded from localStorage key:', key, '—', S.drivers.length, 'drivers');
         return true;
       }
@@ -1088,7 +1091,8 @@ async function load() {
       S.dispatchers  = d.dispatchers  || [];
       S.drivers      = d.drivers      || [];
       S.coordinators = d.coordinators || [];
-      localStorage.setItem(SK, JSON.stringify({ dispatchers: S.dispatchers, drivers: S.drivers, coordinators: S.coordinators }));
+      S.todayChecks  = d.todayChecks  || {};
+      localStorage.setItem(SK, JSON.stringify({ dispatchers: S.dispatchers, drivers: S.drivers, coordinators: S.coordinators, todayChecks: S.todayChecks }));
       setSyncStatus('synced');
       loadedFromFirebase = true;
       if (S.drivers.length < 80) {
@@ -1138,6 +1142,7 @@ async function load() {
   }
 
   refreshWeekConstants();
+  maybeSnapshotToday();
 }
 
 // savePerf: write localStorage + sync to Firestore
@@ -1626,6 +1631,7 @@ function renderAllDrivers() {
     '<div class="archive-hdr" style="margin-bottom:14px;flex-wrap:wrap;gap:10px;">'+
       '<div><div class="section-title">All Drivers</div><div class="section-sub">'+drvs.length+' of '+S.drivers.length+' drivers</div></div>'+
       '<button class="btn-primary" onclick="openDrvModal(null,null)">+ Add Driver</button>'+
+      '<button class="btn-ghost" onclick="openQuickReviewModal()">&#128269; Quick Review</button>'+
       '<button class="btn-ghost" onclick="openTuckInsImportModal()">&#128667; Import Vehicle Codes</button>'+
       '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'+
         '<input id="drv2-search" class="form-input" placeholder="Search name or truck..." value="'+drvSearch2+'" style="width:200px;padding:6px 10px;font-size:12px;" oninput="drvSearch2=this.value;renderAllDrivers()">'+
@@ -2497,11 +2503,39 @@ function todayCard(icon, title, count, color, bodyHtml) {
   </div>`;
 }
 
-function todayRow(name, subtext, actionLabel, actionOnclick) {
-  return `<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.05);">
-    <div><strong style="font-size:12px;">${name}</strong>${subtext ? `<div style="font-size:11px;color:var(--text-2);margin-top:1px;">${subtext}</div>` : ''}</div>
+// category+id identify this specific item for check-off tracking; checks reset
+// naturally each new day (see isTodayChecked / toggleTodayCheck) since a Today
+// list should re-surface something tomorrow if it's genuinely still unresolved.
+function todayRow(category, id, name, subtext, actionLabel, actionOnclick) {
+  const checked = isTodayChecked(category, id);
+  return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.05);">
+    <div style="display:flex;align-items:center;gap:9px;min-width:0;">
+      <input type="checkbox" ${checked?'checked':''} onchange="toggleTodayCheck('${category}','${id}')"
+        style="accent-color:var(--accent);width:14px;height:14px;flex-shrink:0;cursor:pointer;">
+      <div style="min-width:0;${checked?'opacity:.5;':''}">
+        <strong style="font-size:12px;${checked?'text-decoration:line-through;':''}">${name}</strong>
+        ${subtext ? `<div style="font-size:11px;color:var(--text-2);margin-top:1px;">${subtext}</div>` : ''}
+      </div>
+    </div>
     <button class="btn-ghost" style="padding:3px 10px;font-size:10px;flex-shrink:0;" onclick="${actionOnclick}">${actionLabel}</button>
   </div>`;
+}
+
+function todayISODate() { return new Date().toISOString().slice(0,10); }
+
+function isTodayChecked(category, id) {
+  const day = todayISODate();
+  return !!(S.todayChecks && S.todayChecks[day] && S.todayChecks[day][category+':'+id]);
+}
+
+function toggleTodayCheck(category, id) {
+  const day = todayISODate();
+  if (!S.todayChecks) S.todayChecks = {};
+  if (!S.todayChecks[day]) S.todayChecks[day] = {};
+  const key = category + ':' + id;
+  S.todayChecks[day][key] = !S.todayChecks[day][key];
+  save();
+  renderTodayHub();
 }
 
 function renderTodayHub() {
@@ -2528,7 +2562,7 @@ function renderTodayHub() {
 
     ${todayCard('\u26A0\uFE0F', 'Drivers Gone Quiet', hub.exc.inactive.length, 'var(--red)',
       hub.exc.inactive.slice(0,8).map(r => todayRow(
-        r.drv.name,
+        'inactive', r.drv.id, r.drv.name,
         (r.disp?r.disp.name:'Unassigned') + ' \u2014 last seen ' + (r.lastSeen||'never'),
         'View', `openDrvView('${r.drv.id}')`
       )).join('')
@@ -2537,33 +2571,33 @@ function renderTodayHub() {
     ${todayCard('\u{1F4B0}', 'Pay-Risk Drivers Needing a Call', hub.payRisk.length, 'var(--amber)',
       hub.payRisk.slice(0,8).map(d => {
         const p = PERF[d.id];
-        return todayRow(d.name, 'avg take-home $'+Math.round(p.ap).toLocaleString()+'/wk',
+        return todayRow('payrisk', d.id, d.name, 'avg take-home $'+Math.round(p.ap).toLocaleString()+'/wk',
           'Log Call', `openInterventionModal('${d.id}')`);
       }).join('')
     )}
 
     ${todayCard('\u{1F195}', 'New Drivers Unassigned', hub.unassigned.length, 'var(--amber)',
-      hub.unassigned.slice(0,8).map(d => todayRow(d.name, d.driverType,
+      hub.unassigned.slice(0,8).map(d => todayRow('unassigned', d.id, d.name, d.driverType,
         'Assign', `openUnassignedModal()`)).join('')
     )}
 
     ${todayCard('\u{1F4CB}', 'Terminations Still Unreviewed', hub.unreviewedTerm.length, 'var(--amber)',
       hub.unreviewedTerm.slice(0,8).map(d => {
         const disp = dispById(d.dispatcherId);
-        return todayRow(d.name, (disp?disp.name:'Unassigned') + ' \u2014 left ' + fmtDate(d.terminatedDate),
+        return todayRow('unreviewedterm', d.id, d.name, (disp?disp.name:'Unassigned') + ' \u2014 left ' + fmtDate(d.terminatedDate),
           'Review', `openRetentionReview('${d.id}')`);
       }).join('')
     )}
 
     ${todayCard('\u{1F504}', 'Interventions Waiting on an Outcome', hub.pendingOutcomes.length, 'var(--accent)',
-      hub.pendingOutcomes.slice(0,8).map(x => todayRow(x.drv.name, x.iv.action+' on '+x.iv.date,
+      hub.pendingOutcomes.slice(0,8).map(x => todayRow('pendingoutcome', x.iv.id, x.drv.name, x.iv.action+' on '+x.iv.date,
         'Set Outcome', `openOutcomeModal('${x.drv.id}','${x.iv.id}')`)).join('')
     )}
 
     ${todayCard('\u{1F50D}', 'Data Anomalies', hub.anomalies.payOutliers.length + hub.anomalies.dhOutliers.length, 'var(--red)',
-      [...hub.anomalies.payOutliers.slice(0,4).map(a => todayRow(a.drv.name, a.ratio+'% of revenue as pay',
+      [...hub.anomalies.payOutliers.slice(0,4).map(a => todayRow('payanomaly', a.drv.id, a.drv.name, a.ratio+'% of revenue as pay',
           'Check', `openDrvView('${a.drv.id}')`)),
-       ...hub.anomalies.dhOutliers.slice(0,4).map(a => todayRow(a.drv.name, a.dhPct+'% deadhead',
+       ...hub.anomalies.dhOutliers.slice(0,4).map(a => todayRow('dhanomaly', a.drv.id, a.drv.name, a.dhPct+'% deadhead',
           'Check', `openDrvView('${a.drv.id}')`))
       ].join('')
     )}
@@ -2632,6 +2666,296 @@ function fallbackCopy(text, onDone) {
   try { document.execCommand('copy'); onDone(); }
   catch(e) { toast('Could not copy automatically \u2014 select and copy manually', 'error'); }
   document.body.removeChild(ta);
+}
+
+// ============================================================
+//  QUICK REVIEW — tag vehicle codes and mark departures fast
+//  Built for rebuilding data after the Firebase incident: lets
+//  you sort through the driver list right after an upload (or
+//  any time via the standalone entry point) and knock out both
+//  vehicle code tagging and termination+fault review without
+//  hunting through individual profiles one at a time.
+// ============================================================
+let LAST_UPLOAD_SUMMARY_HTML = '';
+let QR_FILTER_TEXT = '';
+let QR_RETURN_MODE = 'standalone'; // 'upload' | 'standalone' -- where Cancel/Confirm return to
+
+function renderQuickReviewTable() {
+  const activeDrivers = S.drivers.filter(d => d.status !== 'terminated' && !d.excluded)
+                                  .sort((a,b) => a.name.localeCompare(b.name));
+  const codeOpts = code => '<option value="">\u2014</option>' +
+    Object.keys(VEHICLE_CODES).map(k => `<option value="${k}" ${code===k?'selected':''}>${k}</option>`).join('');
+
+  const rows = activeDrivers.map(d => {
+    const disp = dispById(d.dispatcherId);
+    return `<tr id="qr-row-${d.id}" data-name="${d.name.toLowerCase()}">
+      <td><strong>${d.name}</strong></td>
+      <td style="color:var(--text-2);font-size:11px;">${disp?disp.name.split(' ')[0]:'\u2014'}</td>
+      <td><select class="select-field" style="font-size:11px;padding:4px 6px;" onchange="quickSetVehicleCode('${d.id}',this.value)">${codeOpts(d.vehicleCode)}</select></td>
+      <td style="text-align:right;"><button class="btn-ghost" style="padding:3px 9px;font-size:10px;color:var(--red);border-color:var(--red);" onclick="openQuickTermModal('${d.id}')">Terminate</button></td>
+    </tr>`;
+  }).join('');
+
+  return `
+    <div style="margin-top:16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <div class="pf-label" style="font-size:12px;">Quick Review \u2014 Tag Codes & Mark Departures (${activeDrivers.length} active)</div>
+      </div>
+      <input type="text" id="qr-search" class="form-input" placeholder="Search driver name..."
+        value="${QR_FILTER_TEXT}" style="margin-bottom:10px;font-size:12px;padding:7px 10px;" oninput="filterQuickReview(this.value)">
+      <div style="max-height:380px;overflow-y:auto;">
+        <table class="archive-table" id="qr-table">
+          <thead><tr><th>Driver</th><th>Dispatcher</th><th>Vehicle Code</th><th style="text-align:right;">Action</th></tr></thead>
+          <tbody id="qr-tbody">${rows || '<tr><td colspan="4" style="color:var(--text-2);font-style:italic;padding:12px;">No active drivers to review.</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+function quickSetVehicleCode(drvId, code) {
+  const i = S.drivers.findIndex(d => d.id === drvId);
+  if (i < 0) return;
+  S.drivers[i].vehicleCode = code;
+  save();
+  toast(S.drivers[i].name + (code ? ' tagged ' + code : ' code cleared'), 'success');
+}
+
+function filterQuickReview(q) {
+  QR_FILTER_TEXT = q;
+  const needle = q.trim().toLowerCase();
+  const rows = document.querySelectorAll('#qr-tbody tr[data-name]');
+  rows.forEach(r => { r.style.display = (!needle || (r.dataset.name||'').includes(needle)) ? '' : 'none'; });
+}
+
+// ── Rebuilds the current review screen after a termination sub-flow closes ──
+function returnToQuickReview() {
+  if (QR_RETURN_MODE === 'upload') {
+    renderUploadReviewScreen();
+  } else {
+    openQuickReviewModal();
+  }
+}
+
+// ── Standalone entry point (Drivers tab) \u2014 review anytime, not just after upload ──
+function openQuickReviewModal() {
+  QR_RETURN_MODE = 'standalone';
+  openModal(`
+    <div class="modal modal-wide"><div class="modal-header">
+      <div class="modal-title">\u{1F50D} Quick Review \u2014 Codes & Departures</div>
+      <button class="modal-close" onclick="closeModal()">&#x2715;</button></div>
+      <div class="modal-body">
+        <p style="color:var(--text-2);margin-bottom:12px;line-height:1.6;font-size:12px;">
+          Tag a vehicle code or terminate a driver right from this list \u2014 changes save immediately, no need to open each profile individually.
+        </p>
+        ${renderQuickReviewTable()}
+      </div>
+      <div class="modal-footer"><button class="btn-ghost" onclick="closeModal()">Close</button></div>
+    </div>`);
+  if (QR_FILTER_TEXT) filterQuickReview(QR_FILTER_TEXT);
+}
+
+// ── Rebuilds the post-upload success screen (summary + review table) ──
+function renderUploadReviewScreen() {
+  const status = document.getElementById('upload-status');
+  if (!status) return;
+  status.innerHTML = LAST_UPLOAD_SUMMARY_HTML + renderQuickReviewTable();
+  if (QR_FILTER_TEXT) filterQuickReview(QR_FILTER_TEXT);
+}
+
+// ── Termination + fault review, combined in one step ──
+function openQuickTermModal(drvId) {
+  const r = drvById(drvId);
+  if (!r) return;
+  const container = QR_RETURN_MODE === 'upload' ? document.getElementById('upload-status') : null;
+  const html = `
+    <div style="padding:4px 0;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+        <button class="btn-ghost" style="padding:4px 10px;font-size:11px;" onclick="returnToQuickReview()">&larr; Back</button>
+        <div style="font-family:'Barlow Condensed',sans-serif;font-size:14px;font-weight:700;color:var(--red);text-transform:uppercase;letter-spacing:.05em;">Terminate & Review \u2014 ${r.name}</div>
+      </div>
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">Termination Date</label>
+          <input class="form-input" id="qtd" type="date" value="${today()}"></div>
+        <div class="form-group"><label class="form-label">Reason</label>
+          <select class="form-select" id="qtr">${TERM_REASONS.map(x=>`<option>${x}</option>`).join('')}</select></div>
+      </div>
+      <div style="margin:16px 0 8px;">
+        <div class="form-label" style="margin-bottom:8px;">Was the dispatcher at fault?</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button id="fb-yes" class="fault-btn" onclick="setFaultBtn('yes')">\u2717 Yes \u2014 Dispatcher</button>
+          <button id="fb-no" class="fault-btn" onclick="setFaultBtn('no')">\u2713 No \u2014 Not Fault</button>
+          <button id="fb-maybe" class="fault-btn" onclick="setFaultBtn('maybe')">? Maybe</button>
+          <button id="fb-company" class="fault-btn" onclick="setFaultBtn('company')">&#127970; Company</button>
+          <button id="fb-coordinator" class="fault-btn" onclick="setFaultBtn('coordinator')">&#127919; Coordinator</button>
+        </div>
+        <div id="fault-hint" style="margin-top:8px;font-size:11px;color:var(--text-2);">Not yet reviewed \u2014 counts against the dispatcher until set.</div>
+      </div>
+      <div class="form-group form-full"><label class="form-label">Notes</label>
+        <textarea class="form-textarea" id="qtn" placeholder="Any additional context...">${r.notes||''}</textarea></div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
+        <button class="btn-ghost" onclick="returnToQuickReview()">Cancel</button>
+        <button class="btn-danger" onclick="confirmQuickTerm('${drvId}')">Confirm Termination</button>
+      </div>
+    </div>`;
+
+  if (container) {
+    container.innerHTML = html;
+  } else {
+    openModal(`<div class="modal modal-wide"><div class="modal-body">${html}</div></div>`);
+  }
+}
+
+function confirmQuickTerm(drvId) {
+  const date   = document.getElementById('qtd').value;
+  const reason = document.getElementById('qtr').value;
+  const notes  = document.getElementById('qtn').value.trim();
+  const selBtn = ['yes','no','maybe','company','coordinator'].find(v => {
+    const btn = document.getElementById('fb-'+v);
+    return btn && btn.dataset.selected === 'true';
+  });
+  if (!date) { toast('Set a termination date', 'error'); return; }
+
+  const i = S.drivers.findIndex(d => d.id === drvId);
+  if (i > -1) {
+    Object.assign(S.drivers[i], { status:'terminated', terminatedDate:date, terminationReason:reason, notes });
+    if (selBtn) S.drivers[i].dispatcherFault = selBtn;
+  }
+  save();
+  toast((S.drivers[i]?.name||'Driver') + ' terminated' + (selBtn ? ' & fault reviewed' : ''), 'info');
+  renderStats();
+  returnToQuickReview();
+}
+
+// ============================================================
+//  LOCAL BACKUP SAFETY NET
+//  Passive protection: once per day, quietly snapshots the full
+//  app state (dispatchers, drivers, coordinators, PERF) into its
+//  own dated localStorage key. Nothing auto-writes to Firestore --
+//  this only ever reads current state and stores a copy. Kept for
+//  10 days on a rolling basis. Also offers a one-click downloadable
+//  file backup and a manual, confirmation-gated restore.
+// ============================================================
+const BACKUP_PREFIX = 'tagtrans_backup_';
+const BACKUP_RETENTION_DAYS = 10;
+
+function maybeSnapshotToday() {
+  try {
+    const key = BACKUP_PREFIX + todayISODate();
+    if (localStorage.getItem(key)) return; // already have today's snapshot
+    const payload = JSON.stringify({
+      dispatchers: S.dispatchers, drivers: S.drivers, coordinators: S.coordinators,
+      todayChecks: S.todayChecks, perf: PERF, savedAt: new Date().toISOString()
+    });
+    localStorage.setItem(key, payload);
+    pruneOldBackups();
+  } catch(e) {
+    console.warn('Daily backup snapshot failed (non-fatal):', e);
+  }
+}
+
+function pruneOldBackups() {
+  try {
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.indexOf(BACKUP_PREFIX) === 0) keys.push(k);
+    }
+    keys.sort(); // dated keys sort chronologically as strings
+    while (keys.length > BACKUP_RETENTION_DAYS) {
+      localStorage.removeItem(keys.shift());
+    }
+  } catch(e) {}
+}
+
+function listLocalBackups() {
+  const out = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || k.indexOf(BACKUP_PREFIX) !== 0) continue;
+      try {
+        const parsed = JSON.parse(localStorage.getItem(k));
+        out.push({
+          key: k, date: k.replace(BACKUP_PREFIX, ''),
+          driverCount: (parsed.drivers||[]).length,
+          dispatcherCount: (parsed.dispatchers||[]).length,
+          coordinatorCount: (parsed.coordinators||[]).length,
+        });
+      } catch(e) {}
+    }
+  } catch(e) {}
+  return out.sort((a,b) => b.date.localeCompare(a.date));
+}
+
+function downloadBackupNow() {
+  const payload = JSON.stringify({
+    dispatchers: S.dispatchers, drivers: S.drivers, coordinators: S.coordinators,
+    todayChecks: S.todayChecks, perf: PERF, savedAt: new Date().toISOString()
+  });
+  const blob = new Blob([payload], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'tagtrans_backup_' + new Date().toISOString().slice(0,19).replace(/:/g,'-') + '.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  toast('Backup downloaded', 'success');
+}
+
+function openLocalBackupsModal() {
+  const backups = listLocalBackups();
+  openModal(`
+    <div class="modal"><div class="modal-header">
+      <div class="modal-title">&#128337; Local Backups</div>
+      <button class="modal-close" onclick="closeModal()">&#x2715;</button></div>
+      <div class="modal-body">
+        <p style="color:var(--text-2);font-size:12px;margin-bottom:14px;line-height:1.6;">
+          One snapshot is saved automatically each day this app is open, kept for the last ${BACKUP_RETENTION_DAYS} days.
+          These live only in this browser \u2014 use <strong style="color:var(--text-1);">Download Backup Now</strong> for a portable file you can keep anywhere.
+        </p>
+        ${!backups.length
+          ? '<div style="color:var(--text-2);font-style:italic;font-size:12px;">No local backups yet \u2014 one will be saved automatically today.</div>'
+          : backups.map(b => `
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:6px;">
+              <div>
+                <strong style="font-size:12px;">${b.date}</strong>
+                <div style="font-size:11px;color:var(--text-2);margin-top:1px;">${b.driverCount} drivers \u00b7 ${b.dispatcherCount} dispatchers \u00b7 ${b.coordinatorCount} coordinators</div>
+              </div>
+              <button class="btn-ghost" style="padding:4px 10px;font-size:10px;color:var(--amber);border-color:var(--amber);" onclick="restoreLocalBackup('${b.key}')">Restore</button>
+            </div>`).join('')
+        }
+      </div>
+      <div class="modal-footer">
+        <button class="btn-ghost" onclick="closeModal()">Close</button>
+        <button class="btn-primary" onclick="downloadBackupNow()">&#11015; Download Backup Now</button>
+      </div>
+    </div>`);
+}
+
+// Restoring is always a deliberate, confirmed action the user takes --
+// never automatic. This is the direct lesson from the earlier incident.
+function restoreLocalBackup(key) {
+  const label = key.replace(BACKUP_PREFIX, '');
+  if (!confirm('Restore the snapshot from ' + label + '?\n\nThis will replace what you currently see with that day\'s data. This only happens because you clicked Restore \u2014 nothing here happens automatically.')) return;
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key));
+    S.dispatchers  = parsed.dispatchers  || [];
+    S.drivers      = parsed.drivers      || [];
+    S.coordinators = parsed.coordinators || [];
+    S.todayChecks  = parsed.todayChecks  || {};
+    if (parsed.perf) {
+      Object.keys(PERF).forEach(k => delete PERF[k]);
+      Object.assign(PERF, parsed.perf);
+      savePerf();
+    }
+    save();
+    closeModal();
+    toast('Restored from ' + label, 'success');
+    render();
+  } catch(e) {
+    toast('Restore failed: ' + e.message, 'error');
+  }
 }
 
 function fleetStats() {
@@ -2721,8 +3045,8 @@ function renderHeader() {
         oninput="handleSearch(this.value)" onfocus="if(this.value) setView('search')">
     </div>
     <nav class="header-nav">
-      <button class="nav-btn ${S.view==='today'?'active':''}"   onclick="setView('today')">Today</button>
       <button class="nav-btn ${S.view==='fleet'?'active':''}"   onclick="setView('fleet')">Fleet</button>
+      <button class="nav-btn ${S.view==='today'?'active':''}"   onclick="setView('today')">Today</button>
       <button class="nav-btn ${S.view==='analytics'?'active':''}" onclick="setView('analytics')">Analytics</button>
       <button class="nav-btn ${S.view==='alerts'?'active':''}"  onclick="setView('alerts')">Alerts${aBadge}</button>
       <div class="nav-more-wrap">
@@ -2736,6 +3060,7 @@ function renderHeader() {
       </div>
     </nav>
     <div class="header-actions">
+      <button onclick="openLocalBackupsModal()" title="View and restore local backups" style="padding:4px 9px;border-radius:5px;border:1px solid var(--border-hi);background:transparent;color:var(--text-2);font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;cursor:pointer;" onmouseover="this.style.color='var(--text-1)'" onmouseout="this.style.color='var(--text-2)'">&#128337; Backups</button>
       <button onclick="forceReloadFromCloud()" title="Force reload all data from Firebase" style="padding:4px 9px;border-radius:5px;border:1px solid var(--border-hi);background:transparent;color:var(--text-2);font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;cursor:pointer;" onmouseover="this.style.color='var(--text-1)'" onmouseout="this.style.color='var(--text-2)'">&#x2601; Reload</button>
       <div style="display:flex;align-items:center;gap:6px;padding:0 4px;">
         <div id="sync-dot" style="width:7px;height:7px;border-radius:50%;background:#8aabca;flex-shrink:0;transition:background .3s;" title="Sync status"></div>
@@ -4314,13 +4639,18 @@ function parseWeeklyFile(file) {
           `).join('')}
         </div>` : '';
 
-      status.innerHTML = `
+      LAST_UPLOAD_SUMMARY_HTML = `
         <div style="padding:12px;background:var(--green-dim);border:1px solid rgba(0,212,122,.2);border-radius:var(--radius);margin-bottom:8px;">
           <div style="color:var(--green);font-weight:700;font-family:'Barlow Condensed',sans-serif;letter-spacing:.06em;text-transform:uppercase;font-size:13px;">✓ Upload Complete</div>
           <div style="color:var(--text-1);font-size:12px;margin-top:4px;">${totalMatched} driver records updated across ${totalNew} sheet(s)</div>
           ${skipMsg}${unmMsg}
         </div>
         <button class="btn-primary" onclick="closeModal();render();">View Updated Dashboard</button>`;
+      QR_RETURN_MODE = 'upload';
+      QR_FILTER_TEXT = '';
+      const dropZoneEl = document.getElementById('drop-zone');
+      if (dropZoneEl) dropZoneEl.style.display = 'none';
+      renderUploadReviewScreen();
     } catch(err) {
       status.innerHTML = `<div style="color:var(--red);font-size:12px;">Error reading file: ${err.message}</div>`;
     }
@@ -4955,7 +5285,8 @@ async function forceReloadFromCloud() {
       S.dispatchers  = d.dispatchers  || [];
       S.drivers      = d.drivers      || [];
       S.coordinators = d.coordinators || [];
-      localStorage.setItem(SK, JSON.stringify({ dispatchers: S.dispatchers, drivers: S.drivers, coordinators: S.coordinators }));
+      S.todayChecks  = d.todayChecks  || {};
+      localStorage.setItem(SK, JSON.stringify({ dispatchers: S.dispatchers, drivers: S.drivers, coordinators: S.coordinators, todayChecks: S.todayChecks }));
     }
     // Reload PERF
     const perfDoc = await PERF_REF.get();
