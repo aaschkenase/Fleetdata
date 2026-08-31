@@ -650,6 +650,30 @@
     }
     option { background: var(--card); color: var(--text-1); }
 
+    .nav-more-wrap { position: relative; }
+    .nav-more-menu {
+      display: none;
+      position: absolute;
+      top: calc(100% + 6px); left: 0;
+      background: var(--surface);
+      border: 1px solid var(--border-hi);
+      border-radius: var(--radius);
+      box-shadow: 0 12px 28px rgba(0,0,0,.5);
+      min-width: 160px;
+      z-index: 500;
+      overflow: hidden;
+    }
+    .nav-more-menu.open { display: block; }
+    .nav-more-item {
+      display: block; width: 100%; text-align: left;
+      padding: 9px 14px; border: none; background: transparent;
+      color: var(--text-2); font-family: 'Barlow Condensed', sans-serif;
+      font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+      cursor: pointer; transition: all .12s;
+    }
+    .nav-more-item:hover { background: var(--card); color: var(--text-1); }
+    .nav-more-item.active { color: var(--accent); background: var(--accent-dim); }
+
     /* searchable driver picker (used in Import Vehicle Codes modal) */
     .drv-picker { position: relative; }
     .drv-picker-list {
@@ -926,7 +950,7 @@ let S = {
   drivers: [],
   coordinators: [],
   sel: null,
-  view: 'fleet',      // 'fleet' | 'archive' | 'alerts' | 'search' | 'analytics' | 'leaderboard' | 'alldrivers'
+  view: 'today',      // 'today' | 'fleet' | 'archive' | 'alerts' | 'search' | 'analytics' | 'leaderboard' | 'alldrivers'
   fleetSubTab: 'dispatchers', // 'dispatchers' | 'coordinators' | 'flatbed' | 'reefer'
   drvFilter: 'all',
   archDisp: 'all',
@@ -1054,30 +1078,21 @@ async function load() {
   try {
     const doc = await STATE_REF.get();
     if (doc.exists) {
+      // Whatever Firestore has is the truth. We NEVER auto-overwrite it based on
+      // a heuristic like "this looks like too few drivers" -- a past version of
+      // this app did exactly that and it silently destroyed months of real data
+      // on nothing more than a low count. If the data looks wrong, that's a
+      // problem for a human to look at and fix on purpose, not for this function
+      // to "fix" automatically and irreversibly on every page load.
       const d = doc.data();
-      const cloudDrivers = d.drivers || [];
-      // If Firebase has suspiciously few drivers it's likely stale early-sync data
-      // Use it only if it has real data (80+ drivers); otherwise treat as empty
-      if (cloudDrivers.length >= 80) {
-        S.dispatchers  = d.dispatchers  || [];
-        S.drivers      = cloudDrivers;
-        S.coordinators = d.coordinators || [];
-        localStorage.setItem(SK, JSON.stringify({ dispatchers: S.dispatchers, drivers: S.drivers, coordinators: S.coordinators }));
-        setSyncStatus('synced');
-        loadedFromFirebase = true;
-      } else {
-        console.warn('Firebase has only', cloudDrivers.length, 'drivers — treating as stale, re-seeding');
-        const gotLocal = tryLocalStorage();
-        if (!gotLocal) seedData();
-        await STATE_REF.set({
-          dispatchers:  S.dispatchers,
-          drivers:      S.drivers,
-          coordinators: S.coordinators || [],
-          _updated:     firebase.firestore.FieldValue.serverTimestamp()
-        });
-        localStorage.setItem(SK, JSON.stringify({ dispatchers: S.dispatchers, drivers: S.drivers, coordinators: S.coordinators }));
-        setSyncStatus('synced');
-        loadedFromFirebase = true;
+      S.dispatchers  = d.dispatchers  || [];
+      S.drivers      = d.drivers      || [];
+      S.coordinators = d.coordinators || [];
+      localStorage.setItem(SK, JSON.stringify({ dispatchers: S.dispatchers, drivers: S.drivers, coordinators: S.coordinators }));
+      setSyncStatus('synced');
+      loadedFromFirebase = true;
+      if (S.drivers.length < 80) {
+        console.warn('Firestore has only', S.drivers.length, 'drivers. Loading it as-is -- nothing was overwritten.');
       }
     } else {
       // Nothing in Firestore — try localStorage (any version), then seed
@@ -2080,6 +2095,85 @@ function planTuckInsImport() {
   return { toApply, alreadySet, sheetOnly, appOnlyActive };
 }
 
+// ============================================================
+//  REUSABLE SEARCHABLE PICKER
+//  A plain <select> gets clipped once it's inside any scrolling container
+//  (modal bodies are all overflow-y:auto) and offers no type-to-search --
+//  this is a small generic replacement: type to filter, click to pick,
+//  positioned with fixed coords so the list always renders above everything
+//  and is never clipped by an ancestor's overflow. Any number of these can
+//  exist on the same page since each is keyed by its own prefix.
+// ============================================================
+let PICKER_REGISTRY  = {}; // prefix -> [{id, label}, ...]
+let PICKER_HIDDEN_ID = {}; // prefix -> the actual hidden-field id to write selections into
+
+function pickerFieldHtml(prefix, options, cfg) {
+  cfg = cfg || {};
+  PICKER_REGISTRY[prefix] = options;
+  const hiddenId = cfg.hiddenId || (prefix + '-val');
+  PICKER_HIDDEN_ID[prefix] = hiddenId; // remember it so open/filter/select all agree on where to write
+  const currentLabel = cfg.currentLabel || '';
+  const currentId    = cfg.currentId || '';
+  const placeholder  = cfg.placeholder || 'Type to search...';
+  const inputStyle   = cfg.inputStyle || '';
+  return '<div class="drv-picker">' +
+    '<input type="text" id="'+prefix+'-search" class="form-input" placeholder="'+placeholder+'" autocomplete="off" value="'+currentLabel+'" '+
+      'style="'+inputStyle+'" oninput="filterPicker(\''+prefix+'\')" onfocus="openPicker(\''+prefix+'\')" onblur="setTimeout(function(){hidePicker(\''+prefix+'\');},150)">' +
+    '<input type="hidden" id="'+hiddenId+'" value="'+currentId+'">' +
+    '<div id="'+prefix+'-list" class="drv-picker-list"></div>' +
+  '</div>';
+}
+
+function pickerHiddenId(prefix) { return PICKER_HIDDEN_ID[prefix] || (prefix+'-val'); }
+
+function openPicker(prefix) {
+  const input = document.getElementById(prefix+'-search');
+  const list  = document.getElementById(prefix+'-list');
+  if (!input || !list) return;
+  const r = input.getBoundingClientRect();
+  list.style.left  = r.left + 'px';
+  list.style.top   = (r.bottom + 4) + 'px';
+  list.style.width = Math.max(r.width, 220) + 'px';
+  list.style.display = 'block';
+  renderPickerOptions(prefix, input.value);
+}
+
+function hidePicker(prefix) {
+  const list = document.getElementById(prefix+'-list');
+  if (list) list.style.display = 'none';
+}
+
+function filterPicker(prefix) {
+  // Any manual retyping invalidates a previous selection until they pick again
+  const valEl = document.getElementById(pickerHiddenId(prefix));
+  if (valEl) valEl.value = '';
+  const input = document.getElementById(prefix+'-search');
+  renderPickerOptions(prefix, input ? input.value : '');
+  openPicker(prefix);
+}
+
+function renderPickerOptions(prefix, filterText) {
+  const list = document.getElementById(prefix+'-list');
+  if (!list) return;
+  const opts = PICKER_REGISTRY[prefix] || [];
+  const q = (filterText||'').trim().toLowerCase();
+  const filtered = q ? opts.filter(o => o.label.toLowerCase().includes(q)) : opts;
+  list.innerHTML = filtered.length
+    ? filtered.slice(0,200).map(o => '<div class="drv-picker-opt" onclick="selectPickerOption(\''+prefix+'\',\''+o.id+'\')">'+o.label+'</div>').join('')
+    : '<div class="drv-picker-empty">No matches</div>';
+}
+
+function selectPickerOption(prefix, id) {
+  const opts = PICKER_REGISTRY[prefix] || [];
+  const o = opts.find(x => x.id === id);
+  if (!o) return;
+  const input = document.getElementById(prefix+'-search');
+  const valEl = document.getElementById(pickerHiddenId(prefix));
+  if (input) input.value = o.label;
+  if (valEl) valEl.value = o.id;
+  hidePicker(prefix);
+}
+
 let PICKER_CANDIDATES = [];
 
 function openTuckInsImportModal() {
@@ -2098,20 +2192,14 @@ function openTuckInsImportModal() {
 
   // NOTE: no per-row buttons here anymore -- selections are collected and applied
   // together in one batch via applyAllQuickAssigns(), so filling in several
-  // pickers doesn't get wiped out by an intermediate re-render.
-  // Each row is a searchable/scrollable picker instead of a native <select> --
-  // a plain <select> with 70+ names gets clipped inside this scrolling table
-  // and can't be searched by typing, so we build a small custom dropdown.
+  // pickers doesn't get wiped out by an intermediate re-render. Each row uses
+  // the reusable searchable picker (see PICKER_REGISTRY above) instead of a
+  // native <select>, since 70+ names clip inside this scrolling table.
+  const pickerOptions = PICKER_CANDIDATES.map(d => ({id:d.id, label:d.name}));
   const sheetOnlyHtml = plan.sheetOnly.map((x,i) =>
     '<tr data-sheet-code="'+x.code+'"><td>'+x.name+'</td>'+
     '<td><span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:99px;background:'+VEHICLE_CODES[x.code].color+'22;color:'+VEHICLE_CODES[x.code].color+';">'+x.code+'</span></td>'+
-    '<td><div class="drv-picker">'+
-      '<input type="text" id="so-search-'+i+'" class="form-input" placeholder="Type driver name..." autocomplete="off" '+
-        'style="font-size:11px;padding:6px 8px;width:100%;min-width:170px;" '+
-        'oninput="filterDriverPicker('+i+')" onfocus="openDriverPicker('+i+')" onblur="setTimeout(function(){hideDriverPicker('+i+');},150)">'+
-      '<input type="hidden" id="so-val-'+i+'">'+
-      '<div id="so-list-'+i+'" class="drv-picker-list"></div>'+
-    '</div></td>'+
+    '<td>'+pickerFieldHtml('so'+i, pickerOptions, {placeholder:'Type driver name...', inputStyle:'font-size:11px;padding:6px 8px;width:100%;min-width:170px;'})+'</td>'+
     '</tr>'
   ).join('');
 
@@ -2195,7 +2283,7 @@ function applyAllQuickAssigns() {
 
   // Sheet-only names -> matched to a driver picked per row (via the searchable picker's hidden field)
   plan.sheetOnly.forEach((x, i) => {
-    const valEl = document.getElementById('so-val-'+i);
+    const valEl = document.getElementById('so'+i+'-val');
     const driverId = valEl && valEl.value;
     if (!driverId) return;
     const idx = S.drivers.findIndex(d => d.id === driverId);
@@ -2217,56 +2305,333 @@ function applyAllQuickAssigns() {
   openTuckInsImportModal(); // refresh once, showing only what's still unresolved
 }
 
-// ── Searchable driver picker (used by the "sheet-only names" rows) ──
-// A plain <select> with 70+ names gets clipped inside the modal's scrolling
-// table and offers no type-to-search, so this is a small custom dropdown
-// instead: type to filter, click to pick, positioned with fixed coords so
-// it always renders above everything and is never clipped by an ancestor's
-// overflow-y:auto.
-function openDriverPicker(i) {
-  const input = document.getElementById('so-search-'+i);
-  const list  = document.getElementById('so-list-'+i);
-  if (!input || !list) return;
-  const r = input.getBoundingClientRect();
-  list.style.left  = r.left + 'px';
-  list.style.top   = (r.bottom + 4) + 'px';
-  list.style.width = Math.max(r.width, 220) + 'px';
-  list.style.display = 'block';
-  renderDriverPickerOptions(i, input.value);
+// ============================================================
+//  INTERVENTION TRACKING
+//  For at-risk / flagged drivers: log what you did about it, then
+//  come back later and mark whether it actually worked. Over time
+//  this becomes a real record of which interventions save drivers
+//  and which don't -- something no report or spreadsheet gives you.
+// ============================================================
+const INTERVENTION_ACTIONS = [
+  'Called driver', 'Offered pay review', 'Addressed equipment issue',
+  'Escalated to coordinator', 'Discussed with dispatcher', 'Other'
+];
+const INTERVENTION_OUTCOMES = [
+  {key:'stayed_improved', label:'Stayed & Improved', color:'var(--green)'},
+  {key:'stayed_same',     label:'Stayed, No Change',  color:'var(--amber)'},
+  {key:'still_struggling',label:'Still Struggling',   color:'var(--amber)'},
+  {key:'left',            label:'Left Anyway',        color:'var(--red)'},
+];
+
+function outcomeInfo(key) { return INTERVENTION_OUTCOMES.find(o => o.key === key) || null; }
+
+function drvInterventionsHTML(drvId) {
+  const drv = drvById(drvId);
+  if (!drv) return '';
+  const list = (drv.interventions || []).slice().sort((a,b) => b.date.localeCompare(a.date));
+  return `<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+      <div class="pf-label" style="font-size:10px;">Interventions ${list.length ? '('+list.length+')' : ''}</div>
+      <button class="btn-ghost" style="padding:4px 10px;font-size:10px;" onclick="openInterventionModal('${drvId}')">+ Log Intervention</button>
+    </div>
+    ${!list.length
+      ? `<div style="font-size:12px;color:var(--text-2);font-style:italic;">No interventions logged yet.</div>`
+      : list.map(iv => {
+          const oc = iv.outcome ? outcomeInfo(iv.outcome) : null;
+          return `<div style="padding:8px 10px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:6px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px;">
+              <span style="font-size:12px;font-weight:600;">${iv.action}</span>
+              <span class="mono" style="font-size:10px;color:var(--text-2);">${iv.date}</span>
+            </div>
+            ${iv.note ? `<div style="font-size:11px;color:var(--text-2);margin-bottom:5px;">${iv.note}</div>` : ''}
+            ${oc
+              ? `<span class="pill" style="background:${oc.color}22;color:${oc.color};border:1px solid ${oc.color}44;">${oc.label}</span>${iv.outcomeNote?` <span style="font-size:11px;color:var(--text-2);">${iv.outcomeNote}</span>`:''}`
+              : `<button class="btn-ghost" style="padding:3px 9px;font-size:10px;" onclick="openOutcomeModal('${drvId}','${iv.id}')">Set Outcome</button>`
+            }
+          </div>`;
+        }).join('')
+    }
+  </div>`;
 }
 
-function hideDriverPicker(i) {
-  const list = document.getElementById('so-list-'+i);
-  if (list) list.style.display = 'none';
+function openInterventionModal(drvId) {
+  const drv = drvById(drvId);
+  if (!drv) return;
+  openModal(`
+    <div class="modal"><div class="modal-header">
+      <div class="modal-title">Log Intervention \u2014 ${drv.name}</div>
+      <button class="modal-close" onclick="closeModal()">&#x2715;</button></div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-group"><label class="form-label">Date</label>
+            <input class="form-input" id="iv-date" type="date" value="${today()}"></div>
+          <div class="form-group"><label class="form-label">Action Taken</label>
+            <select class="form-select" id="iv-action">
+              ${INTERVENTION_ACTIONS.map(a => `<option>${a}</option>`).join('')}
+            </select></div>
+          <div class="form-group form-full"><label class="form-label">Note</label>
+            <textarea class="form-textarea" id="iv-note" placeholder="What did you say / offer / discover?"></textarea></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-ghost" onclick="openDrvView('${drvId}')">Cancel</button>
+        <button class="btn-primary" onclick="saveIntervention('${drvId}')">Save</button>
+      </div>
+    </div>`);
 }
 
-function filterDriverPicker(i) {
-  // Any manual retyping invalidates a previous selection until they pick again
-  const valEl = document.getElementById('so-val-'+i);
-  if (valEl) valEl.value = '';
-  const input = document.getElementById('so-search-'+i);
-  renderDriverPickerOptions(i, input ? input.value : '');
-  openDriverPicker(i);
+function saveIntervention(drvId) {
+  const date   = document.getElementById('iv-date').value;
+  const action = document.getElementById('iv-action').value;
+  const note   = document.getElementById('iv-note').value.trim();
+  if (!date || !action) { toast('Date and action are required', 'error'); return; }
+  const i = S.drivers.findIndex(d => d.id === drvId);
+  if (i < 0) return;
+  if (!S.drivers[i].interventions) S.drivers[i].interventions = [];
+  S.drivers[i].interventions.push({ id: uid(), date, action, note, outcome:'', outcomeDate:'', outcomeNote:'' });
+  save();
+  toast('Intervention logged', 'success');
+  openDrvView(drvId);
 }
 
-function renderDriverPickerOptions(i, filterText) {
-  const list = document.getElementById('so-list-'+i);
-  if (!list) return;
-  const q = (filterText||'').trim().toLowerCase();
-  const filtered = q ? PICKER_CANDIDATES.filter(d => d.name.toLowerCase().includes(q)) : PICKER_CANDIDATES;
-  list.innerHTML = filtered.length
-    ? filtered.slice(0,200).map(d => '<div class="drv-picker-opt" onclick="selectDriverPicker('+i+',\''+d.id+'\')">'+d.name+'</div>').join('')
-    : '<div class="drv-picker-empty">No matching drivers</div>';
+function openOutcomeModal(drvId, ivId) {
+  const drv = drvById(drvId);
+  if (!drv) return;
+  const iv = (drv.interventions||[]).find(x => x.id === ivId);
+  if (!iv) return;
+  openModal(`
+    <div class="modal"><div class="modal-header">
+      <div class="modal-title">Set Outcome \u2014 ${drv.name}</div>
+      <button class="modal-close" onclick="closeModal()">&#x2715;</button></div>
+      <div class="modal-body">
+        <div style="padding:10px 12px;background:var(--card);border-radius:var(--radius);margin-bottom:14px;font-size:12px;color:var(--text-2);">
+          <strong style="color:var(--text-1);">${iv.action}</strong> on ${iv.date}${iv.note?' \u2014 '+iv.note:''}
+        </div>
+        <div class="form-label" style="margin-bottom:8px;">What happened?</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+          ${INTERVENTION_OUTCOMES.map(o => `<button id="oc-${o.key}" class="fault-btn" onclick="pickOutcome('${o.key}')" style="border-color:${o.color}66;color:${o.color};">${o.label}</button>`).join('')}
+        </div>
+        <div class="form-group form-full"><label class="form-label">Note (optional)</label>
+          <textarea class="form-textarea" id="oc-note" placeholder="Any detail worth remembering..."></textarea></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-ghost" onclick="openDrvView('${drvId}')">Cancel</button>
+        <button class="btn-primary" onclick="saveOutcome('${drvId}','${ivId}')">Save Outcome</button>
+      </div>
+    </div>`);
 }
 
-function selectDriverPicker(i, driverId) {
-  const d = PICKER_CANDIDATES.find(x => x.id === driverId);
-  if (!d) return;
-  const input = document.getElementById('so-search-'+i);
-  const valEl = document.getElementById('so-val-'+i);
-  if (input) input.value = d.name;
-  if (valEl) valEl.value = d.id;
-  hideDriverPicker(i);
+function pickOutcome(key) {
+  INTERVENTION_OUTCOMES.forEach(o => {
+    const btn = document.getElementById('oc-'+o.key);
+    if (!btn) return;
+    btn.dataset.selected = (o.key === key) ? 'true' : '';
+    btn.style.background = (o.key === key) ? o.color+'33' : 'transparent';
+  });
+}
+
+function saveOutcome(drvId, ivId) {
+  const picked = INTERVENTION_OUTCOMES.find(o => {
+    const btn = document.getElementById('oc-'+o.key);
+    return btn && btn.dataset.selected === 'true';
+  });
+  if (!picked) { toast('Pick what happened first', 'error'); return; }
+  const note = document.getElementById('oc-note').value.trim();
+  const i = S.drivers.findIndex(d => d.id === drvId);
+  if (i < 0) return;
+  const iv = (S.drivers[i].interventions||[]).find(x => x.id === ivId);
+  if (!iv) return;
+  iv.outcome = picked.key; iv.outcomeDate = today(); iv.outcomeNote = note;
+  save();
+  toast('Outcome recorded', 'success');
+  openDrvView(drvId);
+}
+
+// Interventions logged 14+ days ago with no outcome set yet -- feeds the Today Hub
+function getPendingInterventionOutcomes() {
+  const cutoff = Date.now() - 14*86400000;
+  const pending = [];
+  for (const drv of S.drivers) {
+    if (drv.excluded) continue;
+    for (const iv of (drv.interventions||[])) {
+      if (iv.outcome) continue;
+      if (new Date(iv.date).getTime() <= cutoff) pending.push({ drv, iv });
+    }
+  }
+  return pending.sort((a,b) => a.iv.date.localeCompare(b.iv.date));
+}
+
+// ============================================================
+//  TODAY HUB
+//  The first thing you see when you open the app: everything
+//  that needs a decision or an action right now, pulled from
+//  every corner of the app into one list instead of four tabs.
+// ============================================================
+function getTodayHub() {
+  const exc = getExceptions();
+  const anomalies = getDataAnomalies();
+  const unassigned = S.drivers.filter(d => !d.dispatcherId && d.status !== 'terminated' && !d.excluded);
+  const unreviewedTerm = S.drivers.filter(d => d.status === 'terminated' && !d.excluded && !d.dispatcherFault);
+  const pendingOutcomes = getPendingInterventionOutcomes();
+  const payRisk = S.drivers.filter(d => {
+    if (d.excluded || d.status === 'terminated') return false;
+    const p = PERF[d.id];
+    return p && p.ap > 0 && p.ap < PAY_THRESHOLD;
+  });
+
+  const totalCount = exc.inactive.length + unassigned.length + unreviewedTerm.length +
+    pendingOutcomes.length + payRisk.length + anomalies.payOutliers.length + anomalies.dhOutliers.length;
+
+  return { exc, anomalies, unassigned, unreviewedTerm, pendingOutcomes, payRisk, totalCount };
+}
+
+function todayCard(icon, title, count, color, bodyHtml) {
+  if (!count) return '';
+  return `<div class="ret-kpi" style="padding:14px 16px;margin-bottom:12px;border-left:3px solid ${color};">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+      <span style="font-size:16px;">${icon}</span>
+      <span style="font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;">${title}</span>
+      <span class="pill" style="background:${color}22;color:${color};border:1px solid ${color}44;">${count}</span>
+    </div>
+    ${bodyHtml}
+  </div>`;
+}
+
+function todayRow(name, subtext, actionLabel, actionOnclick) {
+  return `<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.05);">
+    <div><strong style="font-size:12px;">${name}</strong>${subtext ? `<div style="font-size:11px;color:var(--text-2);margin-top:1px;">${subtext}</div>` : ''}</div>
+    <button class="btn-ghost" style="padding:3px 10px;font-size:10px;flex-shrink:0;" onclick="${actionOnclick}">${actionLabel}</button>
+  </div>`;
+}
+
+function renderTodayHub() {
+  const el = document.getElementById('today-el');
+  if (!el) return;
+  const hub = getTodayHub();
+  const dateStr = new Date().toLocaleDateString('en-US', {weekday:'long', month:'long', day:'numeric'});
+
+  el.innerHTML = `
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px;">
+      <div>
+        <div class="section-title">Today</div>
+        <div class="section-sub">${dateStr} \u2014 ${hub.totalCount ? hub.totalCount + ' item' + (hub.totalCount!==1?'s':'') + ' need attention' : 'everything is caught up'}</div>
+      </div>
+      <button class="btn-primary" onclick="copyBriefing()">&#128203; Copy Weekly Briefing</button>
+    </div>
+
+    ${hub.totalCount === 0 ? `
+      <div class="empty-state" style="height:220px;">
+        <div class="empty-icon">\u2705</div>
+        <div class="empty-title">All Caught Up</div>
+        <div class="empty-sub">No unassigned drivers, unreviewed terminations, or open flags right now</div>
+      </div>` : ''}
+
+    ${todayCard('\u26A0\uFE0F', 'Drivers Gone Quiet', hub.exc.inactive.length, 'var(--red)',
+      hub.exc.inactive.slice(0,8).map(r => todayRow(
+        r.drv.name,
+        (r.disp?r.disp.name:'Unassigned') + ' \u2014 last seen ' + (r.lastSeen||'never'),
+        'View', `openDrvView('${r.drv.id}')`
+      )).join('')
+    )}
+
+    ${todayCard('\u{1F4B0}', 'Pay-Risk Drivers Needing a Call', hub.payRisk.length, 'var(--amber)',
+      hub.payRisk.slice(0,8).map(d => {
+        const p = PERF[d.id];
+        return todayRow(d.name, 'avg take-home $'+Math.round(p.ap).toLocaleString()+'/wk',
+          'Log Call', `openInterventionModal('${d.id}')`);
+      }).join('')
+    )}
+
+    ${todayCard('\u{1F195}', 'New Drivers Unassigned', hub.unassigned.length, 'var(--amber)',
+      hub.unassigned.slice(0,8).map(d => todayRow(d.name, d.driverType,
+        'Assign', `openUnassignedModal()`)).join('')
+    )}
+
+    ${todayCard('\u{1F4CB}', 'Terminations Still Unreviewed', hub.unreviewedTerm.length, 'var(--amber)',
+      hub.unreviewedTerm.slice(0,8).map(d => {
+        const disp = dispById(d.dispatcherId);
+        return todayRow(d.name, (disp?disp.name:'Unassigned') + ' \u2014 left ' + fmtDate(d.terminatedDate),
+          'Review', `openRetentionReview('${d.id}')`);
+      }).join('')
+    )}
+
+    ${todayCard('\u{1F504}', 'Interventions Waiting on an Outcome', hub.pendingOutcomes.length, 'var(--accent)',
+      hub.pendingOutcomes.slice(0,8).map(x => todayRow(x.drv.name, x.iv.action+' on '+x.iv.date,
+        'Set Outcome', `openOutcomeModal('${x.drv.id}','${x.iv.id}')`)).join('')
+    )}
+
+    ${todayCard('\u{1F50D}', 'Data Anomalies', hub.anomalies.payOutliers.length + hub.anomalies.dhOutliers.length, 'var(--red)',
+      [...hub.anomalies.payOutliers.slice(0,4).map(a => todayRow(a.drv.name, a.ratio+'% of revenue as pay',
+          'Check', `openDrvView('${a.drv.id}')`)),
+       ...hub.anomalies.dhOutliers.slice(0,4).map(a => todayRow(a.drv.name, a.dhPct+'% deadhead',
+          'Check', `openDrvView('${a.drv.id}')`))
+      ].join('')
+    )}
+  `;
+}
+
+// ============================================================
+//  SHAREABLE WEEKLY BRIEFING
+//  Formats what's on the Today Hub into clean plain text, ready
+//  to paste into Slack, WhatsApp, or a text to a coordinator --
+//  closes the loop on the manual reports this app replaced.
+// ============================================================
+function generateBriefingText() {
+  const f = fleetStats();
+  const hub = getTodayHub();
+  const dateStr = new Date().toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric'});
+
+  // Top performer from the leaderboard
+  const ranked = S.dispatchers.map(d => ({d, xp: calcDispXP(d.id)})).sort((a,b) => b.xp.xp - a.xp.xp);
+  const top = ranked[0];
+  const topTier = top ? getDispRank(top.xp.level) : null;
+
+  const lines = [];
+  lines.push('\uD83D\uDCCA TAG TRANS \u2014 Weekly Briefing (' + dateStr + ')');
+  lines.push('');
+  lines.push('FLEET SNAPSHOT');
+  lines.push('\u2022 ' + (f.act + f.risk) + ' active drivers across ' + S.dispatchers.length + ' dispatchers');
+  if (top) lines.push('\u2022 Top dispatcher: ' + top.d.name + ' \u2014 ' + rankSubName(top.xp.level) + ', Level ' + top.xp.level);
+  lines.push('');
+
+  if (hub.totalCount === 0) {
+    lines.push('\u2705 ALL CLEAR \u2014 nothing needs attention right now.');
+  } else {
+    lines.push('\u26A0\uFE0F NEEDS ATTENTION (' + hub.totalCount + ')');
+    if (hub.exc.inactive.length) lines.push('\u2022 ' + hub.exc.inactive.length + ' driver(s) gone quiet: ' + hub.exc.inactive.slice(0,5).map(r=>r.drv.name).join(', ') + (hub.exc.inactive.length>5?' +'+(hub.exc.inactive.length-5)+' more':''));
+    if (hub.payRisk.length) lines.push('\u2022 ' + hub.payRisk.length + ' driver(s) pay-risk: ' + hub.payRisk.slice(0,5).map(d=>d.name).join(', ') + (hub.payRisk.length>5?' +'+(hub.payRisk.length-5)+' more':''));
+    if (hub.unassigned.length) lines.push('\u2022 ' + hub.unassigned.length + ' new driver(s) need a dispatcher: ' + hub.unassigned.slice(0,5).map(d=>d.name).join(', '));
+    if (hub.unreviewedTerm.length) lines.push('\u2022 ' + hub.unreviewedTerm.length + ' termination(s) still unreviewed');
+    if (hub.pendingOutcomes.length) lines.push('\u2022 ' + hub.pendingOutcomes.length + ' intervention(s) waiting on an outcome check');
+    const anomCount = hub.anomalies.payOutliers.length + hub.anomalies.dhOutliers.length;
+    if (anomCount) lines.push('\u2022 ' + anomCount + ' data anomaly(ies) worth a second look');
+  }
+
+  lines.push('');
+  lines.push('\u2014 generated from Rolling Retention');
+  return lines.join('\n');
+}
+
+function copyBriefing() {
+  const text = generateBriefingText();
+  const finish = () => toast('Briefing copied \u2014 ready to paste', 'success');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(finish).catch(() => fallbackCopy(text, finish));
+  } else {
+    fallbackCopy(text, finish);
+  }
+}
+
+function fallbackCopy(text, onDone) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); onDone(); }
+  catch(e) { toast('Could not copy automatically \u2014 select and copy manually', 'error'); }
+  document.body.removeChild(ta);
 }
 
 function fleetStats() {
@@ -2356,16 +2721,21 @@ function renderHeader() {
         oninput="handleSearch(this.value)" onfocus="if(this.value) setView('search')">
     </div>
     <nav class="header-nav">
+      <button class="nav-btn ${S.view==='today'?'active':''}"   onclick="setView('today')">Today</button>
       <button class="nav-btn ${S.view==='fleet'?'active':''}"   onclick="setView('fleet')">Fleet</button>
       <button class="nav-btn ${S.view==='analytics'?'active':''}" onclick="setView('analytics')">Analytics</button>
       <button class="nav-btn ${S.view==='alerts'?'active':''}"  onclick="setView('alerts')">Alerts${aBadge}</button>
-      <button class="nav-btn ${S.view==='retention'?'active':''}" onclick="setView('retention')">Retention</button>
-      <button class="nav-btn ${S.view==='leaderboard'?'active':''}" onclick="setView('leaderboard')">Leaderboard</button>
-      <button class="nav-btn ${S.view==='alldrivers'?'active':''}" onclick="setView('alldrivers')">Drivers</button>
-      <button class="nav-btn ${S.view==='archive'?'active':''}" onclick="setView('archive')">Archive</button>
+      <div class="nav-more-wrap">
+        <button class="nav-btn ${['retention','leaderboard','alldrivers','archive'].includes(S.view)?'active':''}" onclick="toggleNavMore(event)">More &#9662;</button>
+        <div class="nav-more-menu" id="nav-more-menu">
+          <button class="nav-more-item ${S.view==='retention'?'active':''}" onclick="setView('retention')">Retention</button>
+          <button class="nav-more-item ${S.view==='leaderboard'?'active':''}" onclick="setView('leaderboard')">Leaderboard</button>
+          <button class="nav-more-item ${S.view==='alldrivers'?'active':''}" onclick="setView('alldrivers')">Drivers</button>
+          <button class="nav-more-item ${S.view==='archive'?'active':''}" onclick="setView('archive')">Archive</button>
+        </div>
+      </div>
     </nav>
     <div class="header-actions">
-      <button onclick="resetAndSyncToFirebase()" title="Reset app to clean seed data and sync to Firebase" style="padding:4px 9px;border-radius:5px;border:1px solid var(--red);background:var(--red-dim);color:var(--red);font-family:'Barlow Condensed',sans-serif;font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;cursor:pointer;">&#x21BA; Recover</button>
       <button onclick="forceReloadFromCloud()" title="Force reload all data from Firebase" style="padding:4px 9px;border-radius:5px;border:1px solid var(--border-hi);background:transparent;color:var(--text-2);font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;cursor:pointer;" onmouseover="this.style.color='var(--text-1)'" onmouseout="this.style.color='var(--text-2)'">&#x2601; Reload</button>
       <div style="display:flex;align-items:center;gap:6px;padding:0 4px;">
         <div id="sync-dot" style="width:7px;height:7px;border-radius:50%;background:#8aabca;flex-shrink:0;transition:background .3s;" title="Sync status"></div>
@@ -2428,7 +2798,10 @@ function renderStats() {
 // ============================================================
 function renderMain() {
   const el = document.getElementById('main');
-  if (S.view === 'leaderboard') {
+  if (S.view === 'today') {
+    el.innerHTML = `<div class="archive-wrap" id="today-el"></div>`;
+    renderTodayHub();
+  } else if (S.view === 'leaderboard') {
     el.innerHTML = `<div class="archive-wrap" id="lb-el"></div>`;
     renderLeaderboard();
   } else if (S.view === 'alldrivers') {
@@ -2785,6 +3158,46 @@ function excSection(title, color, icon, rows, cols, rowFn) {
     </div>`;
 }
 
+// ============================================================
+//  DATA QUALITY ANOMALIES
+//  Flags values that are almost certainly data-entry or payroll
+//  processing errors rather than genuine performance issues --
+//  e.g. a driver can't legitimately be paid 179% of the revenue
+//  they generated. Thresholds are calibrated to this fleet's own
+//  data: DH% > 30 and pay ratios outside 10-60% are both rare
+//  enough here that they're worth a second look, not a norm.
+// ============================================================
+function getDataAnomalies() {
+  const payOutliers = [];
+  const dhOutliers  = [];
+
+  for (const drv of S.drivers) {
+    if (drv.excluded || drv.status === 'terminated') continue;
+    const p = PERF[drv.id];
+    if (!p) continue;
+    const disp = dispById(drv.dispatcherId);
+
+    if (p.av > 0 && p.ap > 0) {
+      const ratio = Math.round(p.ap / p.av * 100);
+      if (ratio > 100) {
+        payOutliers.push({drv, disp, ratio, severity:'critical', note:'Pay exceeds revenue \u2014 not possible, check source data'});
+      } else if (ratio > 60) {
+        payOutliers.push({drv, disp, ratio, severity:'high', note:'Pay ratio unusually high for this fleet'});
+      } else if (ratio < 10) {
+        payOutliers.push({drv, disp, ratio, severity:'low', note:'Pay ratio unusually low \u2014 possible payroll gap'});
+      }
+    }
+
+    if (p.dh > 0.30) {
+      dhOutliers.push({drv, disp, dhPct: Math.round(p.dh*100)});
+    }
+  }
+
+  payOutliers.sort((a,b) => b.ratio - a.ratio);
+  dhOutliers.sort((a,b) => b.dhPct - a.dhPct);
+  return { payOutliers, dhOutliers };
+}
+
 function renderAlerts() {
   const el = document.getElementById('alerts-el');
   if (!el) return;
@@ -2884,7 +3297,35 @@ function renderAlerts() {
         <td>${trendBadge(r.trend, r.trendPct)}</td>
         <td><span style="color:var(--green);font-family:'DM Mono',monospace;font-size:11px;">+$${(r.avg-r.target).toLocaleString()}</span></td>
       </tr>`
-    )}`;
+    )}
+
+    ${(() => {
+      const { payOutliers, dhOutliers } = getDataAnomalies();
+      const allAnomalies = payOutliers.length + dhOutliers.length;
+      if (!allAnomalies) return '';
+      const sevColor = s => s==='critical' ? 'var(--red)' : s==='high' ? 'var(--amber)' : 'var(--text-2)';
+      const sevLabel = s => s==='critical' ? 'IMPOSSIBLE' : s==='high' ? 'HIGH' : 'LOW';
+      return excSection(
+        'Data Anomalies \u2014 Worth a Second Look', 'var(--accent)', '\u{1F50D}',
+        [...payOutliers.map(x=>({...x,kind:'pay'})), ...dhOutliers.map(x=>({...x,kind:'dh'}))],
+        ['Driver','Dispatcher','Issue','Value','Note'],
+        r => r.kind === 'pay'
+          ? `<tr onclick="openDrvView('${r.drv.id}')">
+              <td><strong>${r.drv.name}</strong></td>
+              <td style="color:var(--text-2)">${r.disp ? r.disp.name : '\u2014'}</td>
+              <td><span class="pill" style="background:${sevColor(r.severity)}22;color:${sevColor(r.severity)};border:1px solid ${sevColor(r.severity)}44;">${sevLabel(r.severity)} PAY RATIO</span></td>
+              <td class="mono" style="color:${sevColor(r.severity)};font-weight:700;">${r.ratio}% of revenue</td>
+              <td style="color:var(--text-2);font-size:11px;">${r.note}</td>
+            </tr>`
+          : `<tr onclick="openDrvView('${r.drv.id}')">
+              <td><strong>${r.drv.name}</strong></td>
+              <td style="color:var(--text-2)">${r.disp ? r.disp.name : '\u2014'}</td>
+              <td><span class="pill amber">HIGH DEADHEAD</span></td>
+              <td class="mono" style="color:var(--amber);font-weight:700;">${r.dhPct}%</td>
+              <td style="color:var(--text-2);font-size:11px;">Well above normal range \u2014 check for a data entry or routing issue</td>
+            </tr>`
+      );
+    })()}`;
 }
 
 // ============================================================
@@ -3372,6 +3813,60 @@ function coordCard(c) {
 // ============================================================
 //  RETENTION VIEW
 // ============================================================
+// ============================================================
+//  COHORT SURVIVAL CURVES
+//  Groups drivers by hire month and shows what % were still active
+//  at 30/60/90 days. A driver hired too recently to have reached a
+//  given milestone is excluded from THAT milestone's denominator
+//  (not counted as a failure or a success) -- this is standard
+//  survival-analysis practice and keeps recent cohorts from looking
+//  artificially bad just because time hasn't passed yet.
+// ============================================================
+function cohortMonthLabel(ym) {
+  const [y,m] = ym.split('-').map(Number);
+  const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return (names[m-1]||ym) + ' ' + y;
+}
+
+function computeCohortSurvival() {
+  const cohorts = {}; // 'YYYY-MM' -> [driver,...]
+  const now = Date.now();
+
+  for (const d of S.drivers) {
+    if (d.excluded || !d.hireDate) continue;
+    const ym = d.hireDate.slice(0,7);
+    if (!cohorts[ym]) cohorts[ym] = [];
+    cohorts[ym].push(d);
+  }
+
+  const milestones = [30, 60, 90];
+  const result = Object.keys(cohorts).sort().reverse().map(ym => {
+    const drivers = cohorts[ym];
+    const hireDateMs = new Date(ym + '-01').getTime();
+    const row = { ym, total: drivers.length, milestones: {} };
+
+    milestones.forEach(days => {
+      const msElapsedSinceHire = now - hireDateMs;
+      const eligible = drivers.filter(d => {
+        const hireMs = new Date(d.hireDate).getTime();
+        return (now - hireMs) >= days * 86400000; // old enough to judge this milestone
+      });
+      if (!eligible.length) { row.milestones[days] = null; return; }
+      const survived = eligible.filter(d => {
+        if (d.status !== 'terminated') return true; // still active (or at_risk) = survived
+        const hireMs = new Date(d.hireDate).getTime();
+        const termMs = d.terminatedDate ? new Date(d.terminatedDate).getTime() : now;
+        return (termMs - hireMs) >= days * 86400000; // survived past this milestone before leaving
+      });
+      row.milestones[days] = { pct: Math.round(survived.length/eligible.length*100), n: eligible.length };
+    });
+
+    return row;
+  }).filter(r => r.total >= 2); // skip cohorts too small to mean anything
+
+  return result;
+}
+
 function renderRetention() {
   const el = document.getElementById('ret-el');
   if (!el) return;
@@ -3503,7 +3998,35 @@ function renderRetention() {
             }).join('')}
           </tbody>
         </table>`
-    }`;
+    }`
+    + (() => {
+      const cohorts = computeCohortSurvival();
+      if (!cohorts.length) return '';
+      const pctColor = pct => pct === null ? 'var(--text-3)' : pct >= 80 ? 'var(--green)' : pct >= 60 ? 'var(--amber)' : 'var(--red)';
+      const cell = m => m === null
+        ? '<span style="color:var(--text-3);font-size:11px;">too early</span>'
+        : `<span style="color:${pctColor(m.pct)};font-weight:700;">${m.pct}%</span> <span style="color:var(--text-2);font-size:10px;">(n=${m.n})</span>`;
+      return `
+        <div style="margin-top:24px;padding-top:20px;border-top:1px solid var(--border);">
+          <div class="section-title" style="font-size:16px;">Cohort Survival</div>
+          <div class="section-sub" style="margin-bottom:14px;">% of each hire-month cohort still active at 30/60/90 days — cohorts too recent to judge a milestone show "too early" instead of being counted against them</div>
+          <table class="archive-table">
+            <thead><tr>
+              <th>Hired</th><th style="text-align:center">Cohort Size</th>
+              <th style="text-align:center">30-Day</th><th style="text-align:center">60-Day</th><th style="text-align:center">90-Day</th>
+            </tr></thead>
+            <tbody>
+              ${cohorts.map(c => `<tr>
+                <td><strong>${cohortMonthLabel(c.ym)}</strong></td>
+                <td class="mono" style="text-align:center">${c.total}</td>
+                <td style="text-align:center">${cell(c.milestones[30])}</td>
+                <td style="text-align:center">${cell(c.milestones[60])}</td>
+                <td style="text-align:center">${cell(c.milestones[90])}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>`;
+    })();
 }
 
 function retFilter(type, val) {
@@ -3827,6 +4350,12 @@ function setView(v) {
   if (v !== 'search') S.search = '';
   S.view = v; S.sel = null; render();
 }
+
+function toggleNavMore(e) {
+  e.stopPropagation();
+  const menu = document.getElementById('nav-more-menu');
+  if (menu) menu.classList.toggle('open');
+}
 function handleSearch(val) {
   S.search = val.trim();
   if (S.search.length > 0) { S.view = 'search'; renderMain(); }
@@ -3973,10 +4502,10 @@ function openDrvModal(editId, defaultDispId) {
 
           <div class="form-group">
             <label class="form-label">Home State</label>
-            <select class="form-select" id="vst">
-              <option value="">— Select —</option>
-              ${US_STATES.map(s=>`<option ${ex&&ex.homeState===s?'selected':''}>${s}</option>`).join('')}
-            </select>
+${pickerFieldHtml('homestate', US_STATES.map(s=>({id:s,label:s})), {
+              hiddenId:'vst', placeholder:'Type a state...', currentId: ex?ex.homeState||'':'',
+              currentLabel: ex?ex.homeState||'':'', inputStyle:'padding:8px 10px;font-size:13px;width:100%;'
+            })}
           </div>
 
           <div class="form-section">Equipment & Pay</div>
@@ -4202,6 +4731,7 @@ function openDrvView(drvId) {
           </div>`;
         })()}
         ${drvPaycheckHTML(r.id)}
+        ${drvInterventionsHTML(r.id)}
         <div class="profile-actions">
           <button class="btn-ghost" onclick="openDrvModal('${r.id}')">Edit</button>
           <button class="btn-ghost" onclick="openFinancialsModal('${r.id}')">&#128200; Financials</button>
@@ -4448,32 +4978,6 @@ async function forceReloadFromCloud() {
 }
 
 
-// ── Emergency recovery: seed fresh data and push to Firebase ──
-async function resetAndSyncToFirebase() {
-  if (!confirm('This will reset the app to the built-in driver/dispatcher data and sync it to Firebase.\n\nAny changes you made through the UI (notes, retention reviews, coordinator assignments) will be lost.\n\nContinue?')) return;
-  setSyncStatus('saving');
-  seedData();
-  try {
-    await STATE_REF.set({
-      dispatchers:  S.dispatchers,
-      drivers:      S.drivers,
-      coordinators: S.coordinators || [],
-      _updated:     firebase.firestore.FieldValue.serverTimestamp()
-    });
-    localStorage.setItem(SK, JSON.stringify({ dispatchers: S.dispatchers, drivers: S.drivers, coordinators: S.coordinators }));
-    setSyncStatus('synced');
-    const b = document.getElementById('fb-err-banner');
-    if (b) b.remove();
-    toast('Data reset and synced to Firebase ✓ — ' + S.drivers.length + ' drivers, ' + S.dispatchers.length + ' dispatchers', 'success');
-    render();
-  } catch(e) {
-    setSyncStatus('error');
-    showFirebaseError(e);
-    toast('Reset locally but Firebase sync failed — fix Firestore rules first', 'error');
-    render();
-  }
-}
-
 // ── Tooltip system ──────────────────────────────────────────
 document.addEventListener('mousemove', function(e) {
   const tip = document.getElementById('chart-tip');
@@ -4503,6 +5007,15 @@ document.addEventListener('click', function(e) {
   if (type === 'week') showWeekDetail(id);
   else if (type === 'disp') openDispPanel(id);
   else if (type === 'drv')  openDrvView(id);
+});
+
+// Close the "More" nav menu on any click outside it (setView itself rebuilds
+// the header fresh, which already closes it, but this covers clicking away
+// without navigating -- e.g. clicking the search box or elsewhere on the page)
+document.addEventListener('click', function(e) {
+  const menu = document.getElementById('nav-more-menu');
+  if (!menu || !menu.classList.contains('open')) return;
+  if (!e.target.closest('.nav-more-wrap')) menu.classList.remove('open');
 });
 
 loadTheme();
