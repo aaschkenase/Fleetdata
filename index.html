@@ -1054,13 +1054,14 @@ function setSyncStatus(s) {
 
 // save(): write localStorage immediately, sync Firestore in background
 function save() {
-  localStorage.setItem(SK, JSON.stringify({ dispatchers: S.dispatchers, drivers: S.drivers, coordinators: S.coordinators, todayChecks: S.todayChecks }));
+  localStorage.setItem(SK, JSON.stringify({ dispatchers: S.dispatchers, drivers: S.drivers, coordinators: S.coordinators, todayChecks: S.todayChecks, dispatcherUsernameMap: S.dispatcherUsernameMap }));
   setSyncStatus('saving');
   STATE_REF.set({
     dispatchers:  S.dispatchers,
     drivers:      S.drivers,
     coordinators: S.coordinators || [],
     todayChecks:  S.todayChecks || {},
+    dispatcherUsernameMap: S.dispatcherUsernameMap || {},
     _updated:     firebase.firestore.FieldValue.serverTimestamp()
   })
   .then(() => { setSyncStatus('synced'); const b=document.getElementById('fb-err-banner'); if(b) b.remove(); })
@@ -1083,6 +1084,7 @@ function tryLocalStorage() {
         S.drivers      = p.drivers      || [];
         S.coordinators = p.coordinators || [];
         S.todayChecks  = p.todayChecks  || {};
+        S.dispatcherUsernameMap = p.dispatcherUsernameMap || {};
         console.log('Loaded from localStorage key:', key, '—', S.drivers.length, 'drivers');
         return true;
       }
@@ -1151,6 +1153,8 @@ async function load() {
       S.drivers      = d.drivers      || [];
       S.coordinators = d.coordinators || [];
       S.todayChecks  = d.todayChecks  || {};
+      S.dispatcherUsernameMap = d.dispatcherUsernameMap || {};
+      S.dispatcherUsernameMap = d.dispatcherUsernameMap || {};
       localStorage.setItem(SK, JSON.stringify({ dispatchers: S.dispatchers, drivers: S.drivers, coordinators: S.coordinators, todayChecks: S.todayChecks }));
       setSyncStatus('synced');
       loadedFromFirebase = true;
@@ -1202,6 +1206,7 @@ async function load() {
 
   refreshWeekConstants();
   maybeSnapshotToday();
+  loadLoadsFromFirestore(); // fire-and-forget; loads analytics tab checks LOADS when opened
 }
 
 // savePerf: write localStorage + sync to Firestore
@@ -3018,240 +3023,506 @@ function restoreLocalBackup(key) {
 }
 
 // ============================================================
-//  COMBO EXPLORER
-//  The "lane combo" idea translated to this domain: instead of
-//  filtering one attribute at a time, cross ANY two dimensions
-//  (dispatcher, coordinator, ownership type, equipment, status)
-//  and see every combination's numbers laid out together. Patterns
-//  that never show up filtering one thing at a time -- "Owner-Ops
-//  on Flatbed under this one dispatcher are wildly outperforming
-//  everyone else" -- jump out immediately from the grid.
+//  LOAD DATA (McLeod export) — dispatcher-level lane/broker/RPTM
+//  analytics from real per-load data, not weekly averages.
+//
+//  Storage note: this data set is much bigger than anything else
+//  in the app (thousands of loads, growing every upload) and would
+//  blow past Firestore's 1MB single-document limit if stored the
+//  same way as PERF. Instead it lives in its own subcollection --
+//  one document per load, keyed by the McLeod Order number, which
+//  gives free, natural de-duplication: re-uploading an overlapping
+//  period just overwrites the same doc, never creates a duplicate.
 // ============================================================
-const COMBO_DIMENSIONS = {
-  dispatcher: {
-    label: 'Dispatcher',
-    getValue: d => { const disp = dispById(d.dispatcherId); return disp ? disp.name : 'Unassigned'; }
-  },
-  coordinator: {
-    label: 'Coordinator',
-    getValue: d => {
-      const disp = dispById(d.dispatcherId);
-      const co = disp ? coordForDisp(disp.id) : null;
-      return co ? co.name : 'None';
-    }
-  },
-  ownerType: {
-    label: 'Ownership Type',
-    getValue: d => {
-      const c = d.vehicleCode;
-      if (!c) return 'Unset';
-      if (c.indexOf('LP') === 0) return 'Lease Purchase';
-      if (c.indexOf('OO') === 0) return 'Owner Op';
-      if (c.indexOf('CD') === 0) return 'Company';
-      return 'Unset';
-    }
-  },
-  equipment: {
-    label: 'Equipment',
-    getValue: d => {
-      const c = d.vehicleCode;
-      if (c) return c.slice(-1) === 'F' ? 'Flatbed' : 'Reefer';
-      return d.equipmentType || 'Unset';
-    }
-  },
-  status: {
-    label: 'Status',
-    getValue: d => d.status === 'at_risk' ? 'At Risk' : d.status === 'active' ? 'Active' : 'Terminated'
-  },
-};
+const LOADS_COLLECTION = db.collection('fleet').doc('loads').collection('records');
+const SK_LOADS = 'tagtrans_loads_v1';
+let LOADS = {}; // orderId (string) -> load record
 
-const COMBO_METRICS = {
-  retention: { label: 'Adj. Retention %', suffix: '%' },
-  count:     { label: 'Driver Count',     suffix: '' },
-  avgRev:    { label: 'Avg Revenue/Wk',   suffix: '', prefix: '$' },
-  avgPay:    { label: 'Avg Take-Home/Wk', suffix: '', prefix: '$' },
-  avgDh:     { label: 'Avg Deadhead %',   suffix: '%' },
-  avgRptm:   { label: 'Avg RPTM',         suffix: '' },
-};
-
-let COMBO_ROW_DIM = 'dispatcher';
-let COMBO_COL_DIM = 'ownerType';
-let COMBO_METRIC  = 'retention';
-
-function computeComboMetric(drivers, metricKey) {
-  const nonTerm = drivers.filter(d => d.status !== 'terminated');
-  const tot = drivers.length;
-  const termCount = drivers.filter(d => d.status === 'terminated').length;
-  const faultTermCount = drivers.filter(d =>
-    d.status === 'terminated' &&
-    d.dispatcherFault !== 'no' && d.dispatcherFault !== 'company' && d.dispatcherFault !== 'coordinator'
-  ).length;
-
-  switch(metricKey) {
-    case 'count':
-      return tot;
-    case 'retention':
-      return tot > 0 ? Math.round((tot - faultTermCount) / tot * 100) : null;
-    case 'avgRev': {
-      const perfs = nonTerm.map(d => PERF[d.id]).filter(Boolean);
-      return perfs.length ? Math.round(perfs.reduce((s,p) => s+p.av, 0) / perfs.length) : null;
-    }
-    case 'avgPay': {
-      const perfs = nonTerm.map(d => PERF[d.id]).filter(p => p && p.ap > 0);
-      return perfs.length ? Math.round(perfs.reduce((s,p) => s+p.ap, 0) / perfs.length) : null;
-    }
-    case 'avgDh': {
-      const perfs = nonTerm.map(d => PERF[d.id]).filter(Boolean);
-      return perfs.length ? Math.round(perfs.reduce((s,p) => s+p.dh, 0) / perfs.length * 100) : null;
-    }
-    case 'avgRptm': {
-      const perfs = nonTerm.map(d => PERF[d.id]).filter(Boolean);
-      return perfs.length ? Math.round(perfs.reduce((s,p) => s+p.ar, 0) / perfs.length * 100) / 100 : null;
-    }
+async function loadLoadsFromFirestore() {
+  try {
+    const snap = await LOADS_COLLECTION.get();
+    const out = {};
+    snap.forEach(doc => { out[doc.id] = doc.data(); });
+    LOADS = out;
+    localStorage.setItem(SK_LOADS, JSON.stringify(LOADS));
+  } catch(e) {
+    console.warn('Loads fetch failed, falling back to local cache:', e);
+    try {
+      const cached = localStorage.getItem(SK_LOADS);
+      if (cached) LOADS = JSON.parse(cached);
+    } catch(e2) {}
   }
-  return null;
 }
 
-function buildComboGrid() {
-  const rowDim = COMBO_DIMENSIONS[COMBO_ROW_DIM];
-  const colDim = COMBO_DIMENSIONS[COMBO_COL_DIM];
-  const pool = S.drivers.filter(d => !d.excluded);
-
-  const rowVals = [...new Set(pool.map(rowDim.getValue))].sort();
-  const colVals = [...new Set(pool.map(colDim.getValue))].sort();
-
-  const cells = {};
-  let allVals = [];
-  rowVals.forEach(rv => {
-    colVals.forEach(cv => {
-      const drivers = pool.filter(d => rowDim.getValue(d) === rv && colDim.getValue(d) === cv);
-      const val = drivers.length ? computeComboMetric(drivers, COMBO_METRIC) : null;
-      cells[rv+'|||'+cv] = { value: val, count: drivers.length, drivers };
-      if (val !== null && COMBO_METRIC !== 'retention' && COMBO_METRIC !== 'avgDh') allVals.push(val);
+// Writes in chunks of 450 (Firestore's batch limit is 500) so a big
+// backfill of thousands of loads doesn't need thousands of round trips.
+async function saveLoadsBatch(records) {
+  const CHUNK = 450;
+  for (let i = 0; i < records.length; i += CHUNK) {
+    const chunk = records.slice(i, i + CHUNK);
+    const batch = db.batch();
+    chunk.forEach(rec => {
+      const ref = LOADS_COLLECTION.doc(String(rec.id));
+      batch.set(ref, rec);
+      LOADS[String(rec.id)] = rec;
     });
-  });
-
-  return { rowVals, colVals, cells, allVals };
+    await batch.commit();
+  }
+  localStorage.setItem(SK_LOADS, JSON.stringify(LOADS));
 }
 
-function comboCellColor(metricKey, val, allVals) {
-  if (val === null) return 'var(--text-3)';
-  if (metricKey === 'retention') return retColor5(val);
-  if (metricKey === 'avgDh') return val <= 10 ? 'var(--green)' : val <= 18 ? 'var(--amber)' : 'var(--red)';
-  // relative heat for revenue/pay/rptm/count -- min-max within the current grid
-  if (!allVals.length) return 'var(--text-1)';
-  const min = Math.min(...allVals), max = Math.max(...allVals);
-  if (max === min) return 'var(--text-1)';
-  const f = (val - min) / (max - min);
-  return f >= 0.66 ? 'var(--green)' : f >= 0.33 ? 'var(--amber)' : 'var(--red)';
+// ── Username -> dispatcher mapping (persists in the main state doc) ──
+// S.dispatcherUsernameMap: { 'mite': 'disp003', 'loadmaster': '__ignore__', ... }
+function getUsernameMap() { return S.dispatcherUsernameMap || {}; }
+
+function guessDispatcherForUsername(username) {
+  const uNorm = username.toLowerCase().replace(/[^a-z]/g, '');
+  let best = null, bestScore = 0, tie = false;
+  for (const d of S.dispatchers) {
+    const parts = d.name.toLowerCase().split(/\s+/);
+    const first = parts[0] || '', last = parts[parts.length-1] || '';
+    const full = parts.join('');
+    const candidates = [full, first, last, first[0]+last, first+last[0]];
+    let score = 0;
+    candidates.forEach(c => {
+      if (!c) return;
+      if (uNorm === c) score = Math.max(score, 100);
+      else if (uNorm.length >= 3 && (uNorm.includes(c) || c.includes(uNorm))) score = Math.max(score, 60 + Math.min(c.length, uNorm.length));
+    });
+    if (score > bestScore) { bestScore = score; best = d; tie = false; }
+    else if (score === bestScore && score > 0 && best && d.id !== best.id) { tie = true; }
+  }
+  if (tie) return null; // ambiguous (e.g. two "Aleksandar"s) -- let the human decide, don't guess
+  return bestScore >= 60 ? best : null;
 }
 
-function fmtComboVal(metricKey, val) {
-  if (val === null) return '\u2014';
-  const m = COMBO_METRICS[metricKey];
-  return (m.prefix||'') + val.toLocaleString() + (m.suffix||'');
+// ============================================================
+//  PARSER
+// ============================================================
+const LOAD_COL_MAP = {
+  order: 'Order', revenue: 'Total revenue', loadedMiles: 'Loaded miles',
+  emptyMiles: 'Empty miles', totalMiles: 'Total miles', emptyPct: 'Empty pct',
+  revPerLoadedMile: 'Rev/loaded mile', revPerTotalMile: 'Rev/total mile',
+  deliveryDate: 'Delivery date', origin: 'Origin', destination: 'Destination',
+  customer: 'Customer', opUser: 'Operations user', trailerType: 'Trailer type',
+  originState: 'Origin state', destState: 'Destination state', revCode: 'Revenue code',
+  billed: 'Billed',
+};
+
+function excelSerialToISO(val) {
+  if (typeof val === 'number') {
+    const d = new Date(Math.round((val - 25569) * 86400 * 1000));
+    return d.toISOString().slice(0,10);
+  }
+  if (val instanceof Date) return val.toISOString().slice(0,10);
+  const s = String(val).trim();
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return m[0];
+  const m2 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m2) return `${m2[3]}-${m2[1].padStart(2,'0')}-${m2[2].padStart(2,'0')}`;
+  return s;
 }
 
-function setComboDim(which, val) {
-  if (which === 'row') COMBO_ROW_DIM = val;
-  else if (which === 'col') COMBO_COL_DIM = val;
-  else if (which === 'metric') COMBO_METRIC = val;
-  renderComboExplorer();
+function parseLoadsFile(file) {
+  const status = document.getElementById('loads-upload-status');
+  status.innerHTML = `<div style="color:var(--text-2);font-size:12px;">Reading file...</div>`;
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const wb = XLSX.read(e.target.result, {type:'array'});
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+      if (!rows.length) { status.innerHTML = `<div style="color:var(--red);font-size:12px;">File appears empty.</div>`; return; }
+
+      const header = rows[0].map(h => String(h).trim());
+      const idx = {};
+      Object.entries(LOAD_COL_MAP).forEach(([key, colName]) => {
+        idx[key] = header.indexOf(colName);
+      });
+      if (idx.order < 0 || idx.opUser < 0) {
+        status.innerHTML = `<div style="color:var(--red);font-size:12px;">Couldn't find "Order" or "Operations user" columns — this doesn't look like the expected McLeod export.</div>`;
+        return;
+      }
+
+      const parsed = [];
+      const usernamesSeen = {}; // username -> {count, sample:[...]}
+      for (let i = 1; i < rows.length; i++) {
+        const r = rows[i];
+        if (!r || !r[idx.order]) continue;
+        const opUser = String(r[idx.opUser] || '').trim();
+        if (!opUser) continue;
+
+        const originRaw = String(r[idx.origin] || '');
+        const destRaw = String(r[idx.destination] || '');
+        const customerRaw = String(r[idx.customer] || '');
+        const custSplit = customerRaw.split(' - ');
+
+        const rec = {
+          id: String(r[idx.order]).trim(),
+          opUser,
+          revenue: parseFloat(r[idx.revenue]) || 0,
+          loadedMiles: parseFloat(r[idx.loadedMiles]) || 0,
+          emptyMiles: parseFloat(r[idx.emptyMiles]) || 0,
+          totalMiles: parseFloat(r[idx.totalMiles]) || 0,
+          emptyPct: parseFloat(r[idx.emptyPct]) || 0,
+          revPerLoadedMile: parseFloat(r[idx.revPerLoadedMile]) || 0,
+          deliveryDate: excelSerialToISO(r[idx.deliveryDate]),
+          originCity: originRaw.split(',')[0]?.trim() || '',
+          originState: String(r[idx.originState] || '').trim(),
+          destCity: destRaw.split(',')[0]?.trim() || '',
+          destState: String(r[idx.destState] || '').trim(),
+          customerCode: custSplit[0]?.trim() || '',
+          customerName: (custSplit[1] || custSplit[0] || '').trim(),
+          trailerType: String(r[idx.trailerType] || '').trim(),
+          equipCategory: String(r[idx.revCode] || '').trim() === 'RFR' ? 'Reefer' : 'Flatbed',
+        };
+        parsed.push(rec);
+
+        if (!usernamesSeen[opUser]) usernamesSeen[opUser] = { count: 0, sample: rec };
+        usernamesSeen[opUser].count++;
+      }
+
+      const map = getUsernameMap();
+      const unmapped = Object.keys(usernamesSeen).filter(u => !(u in map));
+
+      if (unmapped.length) {
+        showUsernameMappingScreen(unmapped, usernamesSeen, parsed);
+      } else {
+        commitLoadsUpload(parsed);
+      }
+    } catch(err) {
+      status.innerHTML = `<div style="color:var(--red);font-size:12px;">Error reading file: ${err.message}</div>`;
+    }
+  };
+  reader.readAsArrayBuffer(file);
 }
 
-function renderComboExplorer() {
-  const el = document.getElementById('combo-el');
-  if (!el) return;
+// ============================================================
+//  USERNAME MAPPING SCREEN
+// ============================================================
+let PENDING_LOADS_UPLOAD = null;
+let PENDING_UNMAPPED_USERNAMES = [];
 
-  const grid = buildComboGrid();
-  const rowLabel = COMBO_DIMENSIONS[COMBO_ROW_DIM].label;
-  const colLabel = COMBO_DIMENSIONS[COMBO_COL_DIM].label;
-  const metricLabel = COMBO_METRICS[COMBO_METRIC].label;
+function showUsernameMappingScreen(unmapped, usernamesSeen, parsed) {
+  PENDING_LOADS_UPLOAD = parsed;
+  PENDING_UNMAPPED_USERNAMES = unmapped;
+  const status = document.getElementById('loads-upload-status');
 
-  const dimOptions = (current) => Object.entries(COMBO_DIMENSIONS)
-    .map(([k,v]) => `<option value="${k}" ${k===current?'selected':''}>${v.label}</option>`).join('');
-  const metricOptions = Object.entries(COMBO_METRICS)
-    .map(([k,v]) => `<option value="${k}" ${k===COMBO_METRIC?'selected':''}>${v.label}</option>`).join('');
+  const dispOptionsHtml = (guessId) => {
+    let html = '<option value="">\u2014 Select \u2014</option>';
+    html += S.dispatchers.map(d => `<option value="${d.id}" ${d.id===guessId?'selected':''}>${d.name}</option>`).join('');
+    html += '<option value="__new__">+ Add as new dispatcher</option>';
+    html += '<option value="__ignore__">Ignore (system/admin account)</option>';
+    return html;
+  };
 
-  const headerRow = '<tr><th style="text-align:left;"></th>' +
-    grid.colVals.map(cv => `<th style="text-align:center;">${cv}</th>`).join('') + '</tr>';
-
-  const bodyRows = grid.rowVals.map(rv => {
-    const cells = grid.colVals.map(cv => {
-      const cell = grid.cells[rv+'|||'+cv];
-      const color = comboCellColor(COMBO_METRIC, cell.value, grid.allVals);
-      const disabled = cell.count === 0;
-      return `<td style="text-align:center;padding:10px 8px;cursor:${disabled?'default':'pointer'};" ${disabled?'':`onclick="openComboCellDrilldown('${rv.replace(/'/g,"\\'")}','${cv.replace(/'/g,"\\'")}')"`}>
-        <div style="font-family:'DM Mono',monospace;font-size:15px;font-weight:700;color:${color};">${fmtComboVal(COMBO_METRIC, cell.value)}</div>
-        ${cell.count > 0 ? `<div style="font-size:9px;color:var(--text-2);margin-top:2px;">n=${cell.count}</div>` : ''}
-      </td>`;
-    }).join('');
-    return `<tr><td style="text-align:left;font-weight:700;font-size:12px;padding:10px 10px 10px 0;white-space:nowrap;">${rv}</td>${cells}</tr>`;
+  const rows = unmapped.sort((a,b) => usernamesSeen[b].count - usernamesSeen[a].count).map((u, i) => {
+    const info = usernamesSeen[u];
+    const guess = guessDispatcherForUsername(u);
+    const sample = info.sample;
+    return `<tr>
+      <td><strong>${u}</strong></td>
+      <td class="mono" style="text-align:center;">${info.count}</td>
+      <td style="font-size:11px;color:var(--text-2);">${sample.originCity}, ${sample.originState} \u2192 ${sample.destCity}, ${sample.destState}</td>
+      <td><select class="select-field" id="um-sel-${i}" style="font-size:11px;padding:4px 6px;">${dispOptionsHtml(guess?guess.id:'')}</select></td>
+    </tr>`;
   }).join('');
 
-  el.innerHTML = `
-    <div style="margin-bottom:18px;">
-      <div class="section-title">Combo Explorer</div>
-      <div class="section-sub">Cross any two attributes to see how every combination performs \u2014 click a cell to see who's in it</div>
+  status.innerHTML = `
+    <div style="padding:12px;background:var(--amber-dim);border:1px solid rgba(245,166,35,.25);border-radius:var(--radius);margin-bottom:12px;">
+      <div style="color:var(--amber);font-weight:700;font-family:'Barlow Condensed',sans-serif;letter-spacing:.06em;text-transform:uppercase;font-size:13px;">\u26A0 ${unmapped.length} New Username${unmapped.length!==1?'s':''} Found</div>
+      <div style="color:var(--text-1);font-size:12px;margin-top:4px;">Map each one to a dispatcher \u2014 this only needs doing once, future uploads remember it.</div>
     </div>
-
-    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:20px;padding:12px 14px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);">
-      <div style="display:flex;align-items:center;gap:6px;">
-        <span style="font-size:11px;color:var(--text-2);">Rows:</span>
-        <select class="select-field" onchange="setComboDim('row', this.value)">${dimOptions(COMBO_ROW_DIM)}</select>
-      </div>
-      <div style="display:flex;align-items:center;gap:6px;">
-        <span style="font-size:11px;color:var(--text-2);">Columns:</span>
-        <select class="select-field" onchange="setComboDim('col', this.value)">${dimOptions(COMBO_COL_DIM)}</select>
-      </div>
-      <div style="display:flex;align-items:center;gap:6px;">
-        <span style="font-size:11px;color:var(--text-2);">Metric:</span>
-        <select class="select-field" onchange="setComboDim('metric', this.value)">${metricOptions}</select>
-      </div>
-    </div>
-
-    <div style="overflow-x:auto;">
-      <table style="border-collapse:collapse;width:100%;min-width:500px;">
-        <thead style="border-bottom:2px solid var(--border);">${headerRow}</thead>
-        <tbody>${bodyRows}</tbody>
+    <div style="max-height:320px;overflow-y:auto;margin-bottom:12px;">
+      <table class="archive-table">
+        <thead><tr><th>Username</th><th style="text-align:center;">Loads</th><th>Sample Lane</th><th>Maps To</th></tr></thead>
+        <tbody>${rows}</tbody>
       </table>
     </div>
-
-    <div style="margin-top:14px;font-size:11px;color:var(--text-2);">
-      ${rowLabel} \u00d7 ${colLabel} \u2014 showing ${metricLabel}. Cells with no drivers are blank. Click any cell to see the drivers in it.
-    </div>
+    <button class="btn-primary" onclick="confirmUsernameMapping()">Save Mapping & Continue Upload</button>
   `;
 }
 
-function openComboCellDrilldown(rowVal, colVal) {
-  const rowDim = COMBO_DIMENSIONS[COMBO_ROW_DIM];
-  const colDim = COMBO_DIMENSIONS[COMBO_COL_DIM];
-  const pool = S.drivers.filter(d => !d.excluded);
-  const drivers = pool.filter(d => rowDim.getValue(d) === rowVal && colDim.getValue(d) === colVal);
+function confirmUsernameMapping() {
+  const unmapped = PENDING_UNMAPPED_USERNAMES;
+  if (!S.dispatcherUsernameMap) S.dispatcherUsernameMap = {};
+  unmapped.forEach((u, i) => {
+    const sel = document.getElementById('um-sel-'+i);
+    const val = sel ? sel.value : '';
+    if (!val) return; // left blank -- stays unmapped, can be fixed later
+    if (val === '__new__') {
+      const newId = uid();
+      S.dispatchers.push({ id: newId, name: u, role: 'Dispatcher', phone:'', email:'', fleetType:'', createdAt: today() });
+      S.dispatcherUsernameMap[u] = newId;
+    } else {
+      S.dispatcherUsernameMap[u] = val;
+    }
+  });
+  save();
+  toast('Dispatcher mapping saved', 'success');
+  if (PENDING_LOADS_UPLOAD) {
+    commitLoadsUpload(PENDING_LOADS_UPLOAD);
+    PENDING_LOADS_UPLOAD = null;
+  }
+}
 
-  const rows = drivers.map(d => {
-    const disp = dispById(d.dispatcherId);
-    const p = PERF[d.id];
-    const col = sColor(d.status);
-    return `<tr class="clickable-row" data-action="drv:${d.id}" style="cursor:pointer;">
-      <td><strong>${d.name}</strong></td>
-      <td style="color:var(--text-2);font-size:11px;">${disp?disp.name.split(' ')[0]:'\u2014'}</td>
-      <td><span class="pill ${col}"><span class="pill-dot"></span>${sLabel(d.status)}</span></td>
-      <td class="mono" style="text-align:right;color:var(--accent);">${p?'$'+p.av.toLocaleString():'\u2014'}</td>
-      <td class="mono" style="text-align:right;">${d.vehicleCode||'\u2014'}</td>
+// ── Standalone mapping editor -- always accessible, not just mid-upload ──
+function openUsernameMappingModal() {
+  const map = getUsernameMap();
+  const allUsernames = [...new Set(Object.values(LOADS).map(l => l.opUser))].sort();
+  PENDING_UNMAPPED_USERNAMES = allUsernames;
+  const rows = allUsernames.map(u => {
+    const current = map[u] || '';
+    const disp = current && current !== '__ignore__' ? dispById(current) : null;
+    const count = Object.values(LOADS).filter(l => l.opUser === u).length;
+    let opts = '<option value="">\u2014 Unmapped \u2014</option>';
+    opts += S.dispatchers.map(d => `<option value="${d.id}" ${d.id===current?'selected':''}>${d.name}</option>`).join('');
+    opts += `<option value="__ignore__" ${current==='__ignore__'?'selected':''}>Ignore</option>`;
+    return `<tr>
+      <td><strong>${u}</strong></td>
+      <td class="mono" style="text-align:center;">${count}</td>
+      <td>${disp ? '<span style="color:var(--green);">'+disp.name+'</span>' : current==='__ignore__' ? '<span style="color:var(--text-2);">Ignored</span>' : '<span style="color:var(--amber);">Unmapped</span>'}</td>
+      <td><select class="select-field" id="mm-${u.replace(/[^a-zA-Z0-9]/g,'_')}" style="font-size:11px;padding:4px 6px;">${opts}</select></td>
     </tr>`;
   }).join('');
 
   openModal(`
     <div class="modal modal-wide"><div class="modal-header">
-      <div class="modal-title">${rowVal} \u00d7 ${colVal}</div>
+      <div class="modal-title">Dispatcher Username Mapping</div>
       <button class="modal-close" onclick="closeModal()">&#x2715;</button></div>
       <div class="modal-body">
-        <div style="margin-bottom:12px;font-size:12px;color:var(--text-2);">${drivers.length} driver${drivers.length!==1?'s':''} in this combination</div>
-        <table class="archive-table">
-          <thead><tr><th>Driver</th><th>Dispatcher</th><th>Status</th><th style="text-align:right;">Avg Rev/Wk</th><th style="text-align:right;">Code</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
+        <p style="color:var(--text-2);font-size:12px;margin-bottom:14px;">Every McLeod "Operations user" seen across all uploaded loads. Fix any mapping here anytime.</p>
+        ${!allUsernames.length ? '<div style="color:var(--text-2);font-style:italic;">No loads uploaded yet.</div>' :
+        '<table class="archive-table"><thead><tr><th>Username</th><th style="text-align:center;">Loads</th><th>Current</th><th>Maps To</th></tr></thead><tbody>'+rows+'</tbody></table>'}
+      </div>
+      <div class="modal-footer">
+        <button class="btn-ghost" onclick="closeModal()">Cancel</button>
+        <button class="btn-primary" onclick="saveUsernameMappingModal()">Save Changes</button>
+      </div>
+    </div>`);
+}
+
+function saveUsernameMappingModal() {
+  const usernames = PENDING_UNMAPPED_USERNAMES;
+  if (!S.dispatcherUsernameMap) S.dispatcherUsernameMap = {};
+  usernames.forEach(u => {
+    const sel = document.getElementById('mm-'+u.replace(/[^a-zA-Z0-9]/g,'_'));
+    if (!sel) return;
+    if (sel.value) S.dispatcherUsernameMap[u] = sel.value;
+    else delete S.dispatcherUsernameMap[u];
+  });
+  save();
+  closeModal();
+  toast('Mapping updated', 'success');
+  if (S.view === 'loads') renderLoadsAnalytics();
+}
+
+// ============================================================
+//  COMMIT UPLOAD
+// ============================================================
+async function commitLoadsUpload(parsed) {
+  const status = document.getElementById('loads-upload-status');
+  status.innerHTML = `<div style="color:var(--text-2);font-size:12px;">Writing ${parsed.length} loads to the database\u2026 this may take a moment for a large file.</div>`;
+
+  const map = getUsernameMap();
+  const records = parsed.map(p => ({
+    id: p.id, opUser: p.opUser, dispatcherId: map[p.opUser] && map[p.opUser] !== '__ignore__' ? map[p.opUser] : null,
+    revenue: p.revenue, loadedMiles: p.loadedMiles, emptyMiles: p.emptyMiles, totalMiles: p.totalMiles,
+    emptyPct: p.emptyPct, revPerLoadedMile: p.revPerLoadedMile, deliveryDate: p.deliveryDate,
+    originCity: p.originCity, originState: p.originState, destCity: p.destCity, destState: p.destState,
+    customerCode: p.customerCode, customerName: p.customerName, trailerType: p.trailerType, equipCategory: p.equipCategory,
+  }));
+
+  try {
+    await saveLoadsBatch(records);
+    const dates = records.map(r => r.deliveryDate).filter(Boolean).sort();
+    status.innerHTML = `
+      <div style="padding:12px;background:var(--green-dim);border:1px solid rgba(0,212,122,.2);border-radius:var(--radius);">
+        <div style="color:var(--green);font-weight:700;font-family:'Barlow Condensed',sans-serif;letter-spacing:.06em;text-transform:uppercase;font-size:13px;">\u2713 Upload Complete</div>
+        <div style="color:var(--text-1);font-size:12px;margin-top:4px;">${records.length} loads stored${dates.length?' \u2014 '+dates[0]+' to '+dates[dates.length-1]:''}</div>
+      </div>
+      <button class="btn-primary" style="margin-top:10px;" onclick="closeModal();S.view='loads';render();">View Loads Analytics</button>
+    `;
+    toast(records.length + ' loads uploaded', 'success');
+  } catch(e) {
+    status.innerHTML = `<div style="color:var(--red);font-size:12px;">Upload failed: ${e.message}</div>`;
+  }
+}
+
+// ============================================================
+//  UPLOAD MODAL
+// ============================================================
+function openLoadsUploadModal() {
+  openModal(`
+    <div class="modal modal-wide"><div class="modal-header">
+      <div class="modal-title">&#128667; Upload Loads (McLeod Export)</div>
+      <button class="modal-close" onclick="closeModal()">&#x2715;</button></div>
+      <div class="modal-body">
+        <p style="color:var(--text-2);margin-bottom:16px;line-height:1.6;font-size:12px;">
+          Upload a McLeod load export (.xls/.xlsx). Re-uploading overlapping dates is safe \u2014 loads are matched by Order number, so nothing gets duplicated.
+        </p>
+        <div id="loads-drop-zone" style="border:2px dashed var(--border-hi);border-radius:var(--radius-lg);padding:36px;text-align:center;cursor:pointer;background:var(--card);"
+          onclick="document.getElementById('loads-file-inp').click()"
+          ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
+          ondragleave="this.style.borderColor='var(--border-hi)'"
+          ondrop="handleLoadsFileDrop(event)">
+          <div style="font-size:28px;margin-bottom:8px;">&#128193;</div>
+          <div style="font-family:'Barlow Condensed',sans-serif;font-size:14px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;">Drop McLeod export here</div>
+          <div style="font-size:11px;color:var(--text-2);margin-top:4px;">or click to browse \u2014 .xls or .xlsx</div>
+          <input type="file" id="loads-file-inp" accept=".xls,.xlsx" style="display:none" onchange="handleLoadsFileSelect(this)">
+        </div>
+        <div id="loads-upload-status" style="margin-top:14px;"></div>
+      </div>
+      <div class="modal-footer"><button class="btn-ghost" onclick="closeModal()">Cancel</button></div>
+    </div>`);
+}
+
+function handleLoadsFileDrop(e) {
+  e.preventDefault();
+  document.getElementById('loads-drop-zone').style.borderColor = 'var(--border-hi)';
+  const file = e.dataTransfer.files[0];
+  if (file) parseLoadsFile(file);
+}
+
+function handleLoadsFileSelect(inp) {
+  const file = inp.files[0];
+  if (file) parseLoadsFile(file);
+}
+
+// ============================================================
+//  ANALYTICS
+// ============================================================
+function loadsByDispatcher() {
+  const groups = {};
+  Object.values(LOADS).forEach(l => {
+    const key = l.dispatcherId || '__unmapped__';
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(l);
+  });
+  return groups;
+}
+
+function summarizeLoadGroup(loads) {
+  const n = loads.length;
+  const totalRev = loads.reduce((s,l) => s+l.revenue, 0);
+  const totalLoadedMi = loads.reduce((s,l) => s+l.loadedMiles, 0);
+  const avgRptm = totalLoadedMi > 0 ? totalRev / totalLoadedMi : 0;
+  const avgEmptyPct = n ? loads.reduce((s,l) => s+l.emptyPct, 0) / n : 0;
+
+  const stateCounts = {};
+  loads.forEach(l => { if (l.originState) stateCounts[l.originState] = (stateCounts[l.originState]||0)+1; });
+  const topStates = Object.entries(stateCounts).sort((a,b) => b[1]-a[1]).slice(0,5);
+
+  const custCounts = {};
+  loads.forEach(l => {
+    const key = l.customerName || l.customerCode || 'Unknown';
+    if (!custCounts[key]) custCounts[key] = {count:0, revenue:0};
+    custCounts[key].count++; custCounts[key].revenue += l.revenue;
+  });
+  const topCustomers = Object.entries(custCounts).sort((a,b) => b[1].count-a[1].count).slice(0,5);
+
+  return { n, totalRev, avgRptm, avgEmptyPct, topStates, topCustomers };
+}
+
+function renderLoadsAnalytics() {
+  const el = document.getElementById('loads-el');
+  if (!el) return;
+
+  const allLoads = Object.values(LOADS);
+  if (!allLoads.length) {
+    el.innerHTML = `
+      <div class="empty-state" style="height:240px;">
+        <div class="empty-icon">&#128667;</div>
+        <div class="empty-title">No Loads Uploaded Yet</div>
+        <div class="empty-sub">Upload a McLeod export to see dispatcher lane, RPTM, and broker breakdowns</div>
+        <button class="btn-primary" style="margin-top:14px;" onclick="openLoadsUploadModal()">Upload Loads</button>
+      </div>`;
+    return;
+  }
+
+  const dates = allLoads.map(l => l.deliveryDate).filter(Boolean).sort();
+  const groups = loadsByDispatcher();
+  const unmappedCount = (groups['__unmapped__']||[]).length;
+
+  const dispRows = Object.keys(groups).filter(k => k !== '__unmapped__').map(dispId => {
+    const disp = dispById(dispId);
+    if (!disp) return null;
+    const sum = summarizeLoadGroup(groups[dispId]);
+    return { disp, sum };
+  }).filter(Boolean).sort((a,b) => b.sum.totalRev - a.sum.totalRev);
+
+  const rowsHtml = dispRows.map(({disp, sum}) => `
+    <tr class="clickable-row" onclick="openDispatcherLoadsDrilldown('${disp.id}')" style="cursor:pointer;">
+      <td><strong>${disp.name}</strong></td>
+      <td class="mono" style="text-align:right;">${sum.n.toLocaleString()}</td>
+      <td class="mono" style="text-align:right;color:var(--accent);">$${Math.round(sum.totalRev).toLocaleString()}</td>
+      <td class="mono" style="text-align:right;">$${sum.avgRptm.toFixed(2)}</td>
+      <td class="mono" style="text-align:right;color:${sum.avgEmptyPct<=10?'var(--green)':sum.avgEmptyPct<=18?'var(--amber)':'var(--red)'};">${sum.avgEmptyPct.toFixed(1)}%</td>
+      <td style="font-size:11px;color:var(--text-2);">${sum.topStates.slice(0,3).map(([s,c])=>s+' ('+c+')').join(', ')}</td>
+      <td style="font-size:11px;color:var(--text-2);">${sum.topCustomers[0] ? sum.topCustomers[0][0] : '\u2014'}</td>
+    </tr>`).join('');
+
+  el.innerHTML = `
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px;">
+      <div>
+        <div class="section-title">Loads</div>
+        <div class="section-sub">${allLoads.length.toLocaleString()} loads \u2014 ${dates[0]||'?'} to ${dates[dates.length-1]||'?'}${unmappedCount?' \u2014 <span style="color:var(--amber);">'+unmappedCount+' unmapped</span>':''}</div>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn-ghost" onclick="openUsernameMappingModal()">Username Mapping</button>
+        <button class="btn-primary" onclick="openLoadsUploadModal()">&#128667; Upload Loads</button>
+      </div>
+    </div>
+
+    <table class="archive-table">
+      <thead><tr>
+        <th>Dispatcher</th><th style="text-align:right;">Loads</th><th style="text-align:right;">Revenue</th>
+        <th style="text-align:right;">Avg RPTM</th><th style="text-align:right;">Avg Empty%</th>
+        <th>Top States</th><th>Top Customer</th>
+      </tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+    <div style="margin-top:10px;font-size:10px;color:var(--text-2);">Click a dispatcher row for the full state and customer breakdown.</div>
+  `;
+}
+
+function openDispatcherLoadsDrilldown(dispId) {
+  const disp = dispById(dispId);
+  const loads = loadsByDispatcher()[dispId] || [];
+  const sum = summarizeLoadGroup(loads);
+
+  const stateRows = sum.topStates.map(([s,c]) => `<tr><td>${s}</td><td class="mono" style="text-align:right;">${c}</td></tr>`).join('');
+  const custRows = sum.topCustomers.map(([name,d]) => `<tr><td>${name}</td><td class="mono" style="text-align:right;">${d.count}</td><td class="mono" style="text-align:right;color:var(--accent);">$${Math.round(d.revenue).toLocaleString()}</td></tr>`).join('');
+
+  const recentLoads = [...loads].sort((a,b) => (b.deliveryDate||'').localeCompare(a.deliveryDate||'')).slice(0,15);
+  const loadRows = recentLoads.map(l => `<tr>
+    <td class="mono" style="font-size:11px;">${l.deliveryDate}</td>
+    <td style="font-size:11px;">${l.originCity}, ${l.originState} \u2192 ${l.destCity}, ${l.destState}</td>
+    <td style="font-size:11px;color:var(--text-2);">${l.customerName}</td>
+    <td class="mono" style="text-align:right;color:var(--accent);">$${Math.round(l.revenue).toLocaleString()}</td>
+    <td class="mono" style="text-align:right;">$${l.revPerLoadedMile.toFixed(2)}</td>
+  </tr>`).join('');
+
+  openModal(`
+    <div class="modal modal-wide"><div class="modal-header">
+      <div class="modal-title">${disp.name} \u2014 Load Detail</div>
+      <button class="modal-close" onclick="closeModal()">&#x2715;</button></div>
+      <div class="modal-body">
+        <div class="ret-summary-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:18px;">
+          <div class="ret-kpi"><div class="ret-kpi-val">${sum.n.toLocaleString()}</div><div class="ret-kpi-lbl">Total Loads</div></div>
+          <div class="ret-kpi"><div class="ret-kpi-val c-accent">$${Math.round(sum.totalRev).toLocaleString()}</div><div class="ret-kpi-lbl">Total Revenue</div></div>
+          <div class="ret-kpi"><div class="ret-kpi-val">$${sum.avgRptm.toFixed(2)}</div><div class="ret-kpi-lbl">Avg RPTM</div></div>
+          <div class="ret-kpi"><div class="ret-kpi-val" style="color:${sum.avgEmptyPct<=10?'var(--green)':'var(--amber)'};">${sum.avgEmptyPct.toFixed(1)}%</div><div class="ret-kpi-lbl">Avg Empty %</div></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px;">
+          <div><div class="pf-label" style="margin-bottom:8px;">Top Origin States</div>
+            <table class="archive-table"><thead><tr><th>State</th><th style="text-align:right;">Loads</th></tr></thead><tbody>${stateRows}</tbody></table></div>
+          <div><div class="pf-label" style="margin-bottom:8px;">Top Customers</div>
+            <table class="archive-table"><thead><tr><th>Customer</th><th style="text-align:right;">Loads</th><th style="text-align:right;">Revenue</th></tr></thead><tbody>${custRows}</tbody></table></div>
+        </div>
+        <div class="pf-label" style="margin-bottom:8px;">Recent Loads</div>
+        <table class="archive-table"><thead><tr><th>Date</th><th>Lane</th><th>Customer</th><th style="text-align:right;">Revenue</th><th style="text-align:right;">RPTM</th></tr></thead><tbody>${loadRows}</tbody></table>
       </div>
       <div class="modal-footer"><button class="btn-ghost" onclick="closeModal()">Close</button></div>
     </div>`);
@@ -3349,9 +3620,9 @@ function renderHeader() {
       <button class="nav-btn ${S.view==='analytics'?'active':''}" onclick="setView('analytics')">Analytics</button>
       <button class="nav-btn ${S.view==='alerts'?'active':''}"  onclick="setView('alerts')">Alerts${aBadge}</button>
       <div class="nav-more-wrap">
-        <button class="nav-btn ${['combo','retention','leaderboard','alldrivers','archive'].includes(S.view)?'active':''}" onclick="toggleNavMore(event)">More &#9662;</button>
+        <button class="nav-btn ${['loads','retention','leaderboard','alldrivers','archive'].includes(S.view)?'active':''}" onclick="toggleNavMore(event)">More &#9662;</button>
         <div class="nav-more-menu" id="nav-more-menu">
-          <button class="nav-more-item ${S.view==='combo'?'active':''}" onclick="setView('combo')">Combo Explorer</button>
+          <button class="nav-more-item ${S.view==='loads'?'active':''}" onclick="setView('loads')">Loads</button>
           <button class="nav-more-item ${S.view==='retention'?'active':''}" onclick="setView('retention')">Retention</button>
           <button class="nav-more-item ${S.view==='leaderboard'?'active':''}" onclick="setView('leaderboard')">Leaderboard</button>
           <button class="nav-more-item ${S.view==='alldrivers'?'active':''}" onclick="setView('alldrivers')">Drivers</button>
@@ -3427,9 +3698,9 @@ function renderMain() {
   if (S.view === 'today') {
     el.innerHTML = `<div class="archive-wrap" id="today-el"></div>`;
     renderTodayHub();
-  } else if (S.view === 'combo') {
-    el.innerHTML = `<div class="archive-wrap" id="combo-el"></div>`;
-    renderComboExplorer();
+  } else if (S.view === 'loads') {
+    el.innerHTML = `<div class="archive-wrap" id="loads-el"></div>`;
+    renderLoadsAnalytics();
   } else if (S.view === 'leaderboard') {
     el.innerHTML = `<div class="archive-wrap" id="lb-el"></div>`;
     renderLeaderboard();
