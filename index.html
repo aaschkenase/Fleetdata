@@ -870,9 +870,29 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 </head>
 <body>
-<div id="app">
+<div id="login-screen" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:20000;align-items:center;justify-content:center;flex-direction:column;">
+  <div style="width:320px;max-width:90vw;padding:32px 28px;background:var(--card);border:1px solid var(--border-hi);border-radius:var(--radius-lg);box-shadow:0 24px 64px rgba(0,0,0,.5);">
+    <div style="text-align:center;margin-bottom:24px;">
+      <div style="font-size:28px;margin-bottom:8px;">🚛</div>
+      <div style="font-family:'Barlow Condensed',sans-serif;font-size:20px;font-weight:800;letter-spacing:.03em;">TagTrans<span style="color:var(--accent);"> Fleet</span></div>
+      <div style="font-size:11px;color:var(--text-2);margin-top:4px;">Sign in to continue</div>
+    </div>
+    <div class="form-group form-full" style="margin-bottom:12px;">
+      <label class="form-label">Email</label>
+      <input class="form-input" id="login-email" type="email" placeholder="you@tagtrans.com" style="width:100%;" onkeydown="if(event.key==='Enter')document.getElementById('login-pass').focus()">
+    </div>
+    <div class="form-group form-full" style="margin-bottom:16px;">
+      <label class="form-label">Password</label>
+      <input class="form-input" id="login-pass" type="password" placeholder="••••••••" style="width:100%;" onkeydown="if(event.key==='Enter')doSignIn()">
+    </div>
+    <div id="login-error" style="display:none;margin-bottom:12px;padding:8px 10px;background:var(--red-dim);border:1px solid rgba(255,77,77,.25);border-radius:var(--radius);color:var(--red);font-size:11px;"></div>
+    <button class="btn-primary" style="width:100%;justify-content:center;" onclick="doSignIn()">Sign In</button>
+  </div>
+</div>
+<div id="app" style="display:none;">
   <header id="hdr"></header>
   <div id="stats" class="stats-bar"></div>
   <div id="main" style="flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;"></div>
@@ -975,6 +995,45 @@ firebase.initializeApp({
 const db        = firebase.firestore();
 const STATE_REF = db.collection('fleet').doc('state');
 const PERF_REF  = db.collection('fleet').doc('perf');
+const auth      = firebase.auth();
+
+// ============================================================
+//  AUTH — single shared company login, everyone sees the same data.
+//  Firestore rules require request.auth != null, so this isn't just
+//  a screen in front of the app -- it actually gates the database too.
+// ============================================================
+function showLoginScreen() {
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
+}
+
+function showApp() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app').style.display = '';
+}
+
+function doSignIn() {
+  const email = document.getElementById('login-email').value.trim();
+  const pass  = document.getElementById('login-pass').value;
+  const errEl = document.getElementById('login-error');
+  errEl.style.display = 'none';
+  if (!email || !pass) {
+    errEl.textContent = 'Enter your email and password.';
+    errEl.style.display = 'block';
+    return;
+  }
+  auth.signInWithEmailAndPassword(email, pass).catch(e => {
+    errEl.textContent = e.code === 'auth/invalid-credential' || e.code === 'auth/wrong-password' || e.code === 'auth/user-not-found'
+      ? 'Incorrect email or password.'
+      : 'Sign-in failed: ' + e.message;
+    errEl.style.display = 'block';
+  });
+}
+
+function doSignOut() {
+  if (!confirm('Sign out?')) return;
+  auth.signOut();
+}
 
 function setSyncStatus(s) {
   const el = document.getElementById('sync-dot');
@@ -2958,6 +3017,246 @@ function restoreLocalBackup(key) {
   }
 }
 
+// ============================================================
+//  COMBO EXPLORER
+//  The "lane combo" idea translated to this domain: instead of
+//  filtering one attribute at a time, cross ANY two dimensions
+//  (dispatcher, coordinator, ownership type, equipment, status)
+//  and see every combination's numbers laid out together. Patterns
+//  that never show up filtering one thing at a time -- "Owner-Ops
+//  on Flatbed under this one dispatcher are wildly outperforming
+//  everyone else" -- jump out immediately from the grid.
+// ============================================================
+const COMBO_DIMENSIONS = {
+  dispatcher: {
+    label: 'Dispatcher',
+    getValue: d => { const disp = dispById(d.dispatcherId); return disp ? disp.name : 'Unassigned'; }
+  },
+  coordinator: {
+    label: 'Coordinator',
+    getValue: d => {
+      const disp = dispById(d.dispatcherId);
+      const co = disp ? coordForDisp(disp.id) : null;
+      return co ? co.name : 'None';
+    }
+  },
+  ownerType: {
+    label: 'Ownership Type',
+    getValue: d => {
+      const c = d.vehicleCode;
+      if (!c) return 'Unset';
+      if (c.indexOf('LP') === 0) return 'Lease Purchase';
+      if (c.indexOf('OO') === 0) return 'Owner Op';
+      if (c.indexOf('CD') === 0) return 'Company';
+      return 'Unset';
+    }
+  },
+  equipment: {
+    label: 'Equipment',
+    getValue: d => {
+      const c = d.vehicleCode;
+      if (c) return c.slice(-1) === 'F' ? 'Flatbed' : 'Reefer';
+      return d.equipmentType || 'Unset';
+    }
+  },
+  status: {
+    label: 'Status',
+    getValue: d => d.status === 'at_risk' ? 'At Risk' : d.status === 'active' ? 'Active' : 'Terminated'
+  },
+};
+
+const COMBO_METRICS = {
+  retention: { label: 'Adj. Retention %', suffix: '%' },
+  count:     { label: 'Driver Count',     suffix: '' },
+  avgRev:    { label: 'Avg Revenue/Wk',   suffix: '', prefix: '$' },
+  avgPay:    { label: 'Avg Take-Home/Wk', suffix: '', prefix: '$' },
+  avgDh:     { label: 'Avg Deadhead %',   suffix: '%' },
+  avgRptm:   { label: 'Avg RPTM',         suffix: '' },
+};
+
+let COMBO_ROW_DIM = 'dispatcher';
+let COMBO_COL_DIM = 'ownerType';
+let COMBO_METRIC  = 'retention';
+
+function computeComboMetric(drivers, metricKey) {
+  const nonTerm = drivers.filter(d => d.status !== 'terminated');
+  const tot = drivers.length;
+  const termCount = drivers.filter(d => d.status === 'terminated').length;
+  const faultTermCount = drivers.filter(d =>
+    d.status === 'terminated' &&
+    d.dispatcherFault !== 'no' && d.dispatcherFault !== 'company' && d.dispatcherFault !== 'coordinator'
+  ).length;
+
+  switch(metricKey) {
+    case 'count':
+      return tot;
+    case 'retention':
+      return tot > 0 ? Math.round((tot - faultTermCount) / tot * 100) : null;
+    case 'avgRev': {
+      const perfs = nonTerm.map(d => PERF[d.id]).filter(Boolean);
+      return perfs.length ? Math.round(perfs.reduce((s,p) => s+p.av, 0) / perfs.length) : null;
+    }
+    case 'avgPay': {
+      const perfs = nonTerm.map(d => PERF[d.id]).filter(p => p && p.ap > 0);
+      return perfs.length ? Math.round(perfs.reduce((s,p) => s+p.ap, 0) / perfs.length) : null;
+    }
+    case 'avgDh': {
+      const perfs = nonTerm.map(d => PERF[d.id]).filter(Boolean);
+      return perfs.length ? Math.round(perfs.reduce((s,p) => s+p.dh, 0) / perfs.length * 100) : null;
+    }
+    case 'avgRptm': {
+      const perfs = nonTerm.map(d => PERF[d.id]).filter(Boolean);
+      return perfs.length ? Math.round(perfs.reduce((s,p) => s+p.ar, 0) / perfs.length * 100) / 100 : null;
+    }
+  }
+  return null;
+}
+
+function buildComboGrid() {
+  const rowDim = COMBO_DIMENSIONS[COMBO_ROW_DIM];
+  const colDim = COMBO_DIMENSIONS[COMBO_COL_DIM];
+  const pool = S.drivers.filter(d => !d.excluded);
+
+  const rowVals = [...new Set(pool.map(rowDim.getValue))].sort();
+  const colVals = [...new Set(pool.map(colDim.getValue))].sort();
+
+  const cells = {};
+  let allVals = [];
+  rowVals.forEach(rv => {
+    colVals.forEach(cv => {
+      const drivers = pool.filter(d => rowDim.getValue(d) === rv && colDim.getValue(d) === cv);
+      const val = drivers.length ? computeComboMetric(drivers, COMBO_METRIC) : null;
+      cells[rv+'|||'+cv] = { value: val, count: drivers.length, drivers };
+      if (val !== null && COMBO_METRIC !== 'retention' && COMBO_METRIC !== 'avgDh') allVals.push(val);
+    });
+  });
+
+  return { rowVals, colVals, cells, allVals };
+}
+
+function comboCellColor(metricKey, val, allVals) {
+  if (val === null) return 'var(--text-3)';
+  if (metricKey === 'retention') return retColor5(val);
+  if (metricKey === 'avgDh') return val <= 10 ? 'var(--green)' : val <= 18 ? 'var(--amber)' : 'var(--red)';
+  // relative heat for revenue/pay/rptm/count -- min-max within the current grid
+  if (!allVals.length) return 'var(--text-1)';
+  const min = Math.min(...allVals), max = Math.max(...allVals);
+  if (max === min) return 'var(--text-1)';
+  const f = (val - min) / (max - min);
+  return f >= 0.66 ? 'var(--green)' : f >= 0.33 ? 'var(--amber)' : 'var(--red)';
+}
+
+function fmtComboVal(metricKey, val) {
+  if (val === null) return '\u2014';
+  const m = COMBO_METRICS[metricKey];
+  return (m.prefix||'') + val.toLocaleString() + (m.suffix||'');
+}
+
+function setComboDim(which, val) {
+  if (which === 'row') COMBO_ROW_DIM = val;
+  else if (which === 'col') COMBO_COL_DIM = val;
+  else if (which === 'metric') COMBO_METRIC = val;
+  renderComboExplorer();
+}
+
+function renderComboExplorer() {
+  const el = document.getElementById('combo-el');
+  if (!el) return;
+
+  const grid = buildComboGrid();
+  const rowLabel = COMBO_DIMENSIONS[COMBO_ROW_DIM].label;
+  const colLabel = COMBO_DIMENSIONS[COMBO_COL_DIM].label;
+  const metricLabel = COMBO_METRICS[COMBO_METRIC].label;
+
+  const dimOptions = (current) => Object.entries(COMBO_DIMENSIONS)
+    .map(([k,v]) => `<option value="${k}" ${k===current?'selected':''}>${v.label}</option>`).join('');
+  const metricOptions = Object.entries(COMBO_METRICS)
+    .map(([k,v]) => `<option value="${k}" ${k===COMBO_METRIC?'selected':''}>${v.label}</option>`).join('');
+
+  const headerRow = '<tr><th style="text-align:left;"></th>' +
+    grid.colVals.map(cv => `<th style="text-align:center;">${cv}</th>`).join('') + '</tr>';
+
+  const bodyRows = grid.rowVals.map(rv => {
+    const cells = grid.colVals.map(cv => {
+      const cell = grid.cells[rv+'|||'+cv];
+      const color = comboCellColor(COMBO_METRIC, cell.value, grid.allVals);
+      const disabled = cell.count === 0;
+      return `<td style="text-align:center;padding:10px 8px;cursor:${disabled?'default':'pointer'};" ${disabled?'':`onclick="openComboCellDrilldown('${rv.replace(/'/g,"\\'")}','${cv.replace(/'/g,"\\'")}')"`}>
+        <div style="font-family:'DM Mono',monospace;font-size:15px;font-weight:700;color:${color};">${fmtComboVal(COMBO_METRIC, cell.value)}</div>
+        ${cell.count > 0 ? `<div style="font-size:9px;color:var(--text-2);margin-top:2px;">n=${cell.count}</div>` : ''}
+      </td>`;
+    }).join('');
+    return `<tr><td style="text-align:left;font-weight:700;font-size:12px;padding:10px 10px 10px 0;white-space:nowrap;">${rv}</td>${cells}</tr>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div style="margin-bottom:18px;">
+      <div class="section-title">Combo Explorer</div>
+      <div class="section-sub">Cross any two attributes to see how every combination performs \u2014 click a cell to see who's in it</div>
+    </div>
+
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:20px;padding:12px 14px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);">
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span style="font-size:11px;color:var(--text-2);">Rows:</span>
+        <select class="select-field" onchange="setComboDim('row', this.value)">${dimOptions(COMBO_ROW_DIM)}</select>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span style="font-size:11px;color:var(--text-2);">Columns:</span>
+        <select class="select-field" onchange="setComboDim('col', this.value)">${dimOptions(COMBO_COL_DIM)}</select>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span style="font-size:11px;color:var(--text-2);">Metric:</span>
+        <select class="select-field" onchange="setComboDim('metric', this.value)">${metricOptions}</select>
+      </div>
+    </div>
+
+    <div style="overflow-x:auto;">
+      <table style="border-collapse:collapse;width:100%;min-width:500px;">
+        <thead style="border-bottom:2px solid var(--border);">${headerRow}</thead>
+        <tbody>${bodyRows}</tbody>
+      </table>
+    </div>
+
+    <div style="margin-top:14px;font-size:11px;color:var(--text-2);">
+      ${rowLabel} \u00d7 ${colLabel} \u2014 showing ${metricLabel}. Cells with no drivers are blank. Click any cell to see the drivers in it.
+    </div>
+  `;
+}
+
+function openComboCellDrilldown(rowVal, colVal) {
+  const rowDim = COMBO_DIMENSIONS[COMBO_ROW_DIM];
+  const colDim = COMBO_DIMENSIONS[COMBO_COL_DIM];
+  const pool = S.drivers.filter(d => !d.excluded);
+  const drivers = pool.filter(d => rowDim.getValue(d) === rowVal && colDim.getValue(d) === colVal);
+
+  const rows = drivers.map(d => {
+    const disp = dispById(d.dispatcherId);
+    const p = PERF[d.id];
+    const col = sColor(d.status);
+    return `<tr class="clickable-row" data-action="drv:${d.id}" style="cursor:pointer;">
+      <td><strong>${d.name}</strong></td>
+      <td style="color:var(--text-2);font-size:11px;">${disp?disp.name.split(' ')[0]:'\u2014'}</td>
+      <td><span class="pill ${col}"><span class="pill-dot"></span>${sLabel(d.status)}</span></td>
+      <td class="mono" style="text-align:right;color:var(--accent);">${p?'$'+p.av.toLocaleString():'\u2014'}</td>
+      <td class="mono" style="text-align:right;">${d.vehicleCode||'\u2014'}</td>
+    </tr>`;
+  }).join('');
+
+  openModal(`
+    <div class="modal modal-wide"><div class="modal-header">
+      <div class="modal-title">${rowVal} \u00d7 ${colVal}</div>
+      <button class="modal-close" onclick="closeModal()">&#x2715;</button></div>
+      <div class="modal-body">
+        <div style="margin-bottom:12px;font-size:12px;color:var(--text-2);">${drivers.length} driver${drivers.length!==1?'s':''} in this combination</div>
+        <table class="archive-table">
+          <thead><tr><th>Driver</th><th>Dispatcher</th><th>Status</th><th style="text-align:right;">Avg Rev/Wk</th><th style="text-align:right;">Code</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div class="modal-footer"><button class="btn-ghost" onclick="closeModal()">Close</button></div>
+    </div>`);
+}
+
 function fleetStats() {
   const all  = allActiveDrivers();
   const act  = all.filter(d => d.status === 'active').length;
@@ -3050,8 +3349,9 @@ function renderHeader() {
       <button class="nav-btn ${S.view==='analytics'?'active':''}" onclick="setView('analytics')">Analytics</button>
       <button class="nav-btn ${S.view==='alerts'?'active':''}"  onclick="setView('alerts')">Alerts${aBadge}</button>
       <div class="nav-more-wrap">
-        <button class="nav-btn ${['retention','leaderboard','alldrivers','archive'].includes(S.view)?'active':''}" onclick="toggleNavMore(event)">More &#9662;</button>
+        <button class="nav-btn ${['combo','retention','leaderboard','alldrivers','archive'].includes(S.view)?'active':''}" onclick="toggleNavMore(event)">More &#9662;</button>
         <div class="nav-more-menu" id="nav-more-menu">
+          <button class="nav-more-item ${S.view==='combo'?'active':''}" onclick="setView('combo')">Combo Explorer</button>
           <button class="nav-more-item ${S.view==='retention'?'active':''}" onclick="setView('retention')">Retention</button>
           <button class="nav-more-item ${S.view==='leaderboard'?'active':''}" onclick="setView('leaderboard')">Leaderboard</button>
           <button class="nav-more-item ${S.view==='alldrivers'?'active':''}" onclick="setView('alldrivers')">Drivers</button>
@@ -3061,6 +3361,7 @@ function renderHeader() {
     </nav>
     <div class="header-actions">
       <button onclick="openLocalBackupsModal()" title="View and restore local backups" style="padding:4px 9px;border-radius:5px;border:1px solid var(--border-hi);background:transparent;color:var(--text-2);font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;cursor:pointer;" onmouseover="this.style.color='var(--text-1)'" onmouseout="this.style.color='var(--text-2)'">&#128337; Backups</button>
+      <button onclick="doSignOut()" title="Sign out" style="padding:4px 9px;border-radius:5px;border:1px solid var(--border-hi);background:transparent;color:var(--text-2);font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;cursor:pointer;" onmouseover="this.style.color='var(--text-1)'" onmouseout="this.style.color='var(--text-2)'">&#8631; Sign Out</button>
       <button onclick="forceReloadFromCloud()" title="Force reload all data from Firebase" style="padding:4px 9px;border-radius:5px;border:1px solid var(--border-hi);background:transparent;color:var(--text-2);font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;cursor:pointer;" onmouseover="this.style.color='var(--text-1)'" onmouseout="this.style.color='var(--text-2)'">&#x2601; Reload</button>
       <div style="display:flex;align-items:center;gap:6px;padding:0 4px;">
         <div id="sync-dot" style="width:7px;height:7px;border-radius:50%;background:#8aabca;flex-shrink:0;transition:background .3s;" title="Sync status"></div>
@@ -3126,6 +3427,9 @@ function renderMain() {
   if (S.view === 'today') {
     el.innerHTML = `<div class="archive-wrap" id="today-el"></div>`;
     renderTodayHub();
+  } else if (S.view === 'combo') {
+    el.innerHTML = `<div class="archive-wrap" id="combo-el"></div>`;
+    renderComboExplorer();
   } else if (S.view === 'leaderboard') {
     el.innerHTML = `<div class="archive-wrap" id="lb-el"></div>`;
     renderLeaderboard();
@@ -5350,7 +5654,20 @@ document.addEventListener('click', function(e) {
 });
 
 loadTheme();
-load().then(() => { computeRiskFlags(); render(); });
+
+let __appBooted = false;
+auth.onAuthStateChanged(user => {
+  if (user) {
+    showApp();
+    if (!__appBooted) {
+      __appBooted = true;
+      load().then(() => { computeRiskFlags(); render(); });
+    }
+  } else {
+    __appBooted = false;
+    showLoginScreen();
+  }
+});
 </script>
 </body>
 </html>
