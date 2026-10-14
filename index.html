@@ -8,57 +8,65 @@
   <style>
     /* ── DARK MODE (default) ── */
     :root {
-      --bg:          #07090e;
-      --surface:     #0c1018;
-      --card:        #101620;
-      --card-hover:  #141d2c;
-      --card-sel:    #152338;
-      --border:      #1e2d42;
-      --border-hi:   #2a3f5c;
-      --accent:      #00c4a7;
-      --accent-dim:  rgba(0,196,167,.12);
-      --accent-glow: rgba(0,196,167,.25);
-      --text-1:      #e2eef8;
-      --text-2:      #8aabca;
-      --text-3:      #5a7a96;
-      --green:       #00d47a;
-      --green-dim:   rgba(0,212,122,.12);
-      --amber:       #f5a623;
-      --amber-dim:   rgba(245,166,35,.12);
-      --red:         #ff4d4d;
-      --red-dim:     rgba(255,77,77,.12);
-      --radius:      8px;
-      --radius-lg:   12px;
-      --shadow:      0 4px 20px rgba(0,0,0,.5);
-      --shadow-lg:   0 32px 80px rgba(0,0,0,.7);
-      --dot-color:   rgba(255,255,255,.025);
+      --bg:          #202124;
+      --surface:     #26272b;
+      --card:        #2b2c31;
+      --card-hover:  #313238;
+      --card-sel:    #383a41;
+      --border:      #45464c;
+      --border-hi:   #5b5d64;
+      --accent:      #7fa8d8;
+      --accent-dim:  rgba(127,168,216,.13);
+      --accent-glow: rgba(127,168,216,.28);
+      --text-1:      #f0ede2;
+      --text-2:      #98958a;
+      --text-3:      #6f6d64;
+      --green:       #6fbf8a;
+      --green-dim:   rgba(111,191,138,.13);
+      --amber:       #d9a545;
+      --amber-dim:   rgba(217,165,69,.13);
+      --red:         #e05545;
+      --red-dim:     rgba(224,85,69,.13);
+      --radius:      3px;
+      --radius-lg:   5px;
+      --shadow:      0 4px 20px rgba(0,0,0,.45);
+      --shadow-lg:   0 32px 80px rgba(0,0,0,.6);
+      --ink:         #c6c2b4;
+      --ink-dim:     rgba(198,194,180,.45);
+      --hatch:       rgba(224,85,69,.28);
+      --grid-fine:   rgba(120,160,200,.07);
+      --grid-major:  rgba(120,160,200,.14);
       --theme-icon:  '☀';
     }
 
     /* ── LIGHT MODE ── */
     [data-theme="light"] {
-      --bg:          #eef2f7;
-      --surface:     #ffffff;
-      --card:        #f8fafd;
-      --card-hover:  #f0f5fb;
-      --card-sel:    #e4eef8;
-      --border:      #d0dce9;
-      --border-hi:   #b5c8dc;
-      --accent:      #009e87;
-      --accent-dim:  rgba(0,158,135,.1);
-      --accent-glow: rgba(0,158,135,.2);
-      --text-1:      #0e1c2a;
-      --text-2:      #3d5a74;
-      --text-3:      #6b8da8;
-      --green:       #00a85e;
-      --green-dim:   rgba(0,168,94,.1);
-      --amber:       #c97f00;
-      --amber-dim:   rgba(201,127,0,.1);
-      --red:         #d63030;
-      --red-dim:     rgba(214,48,48,.1);
-      --shadow:      0 4px 20px rgba(0,0,0,.08);
-      --shadow-lg:   0 32px 80px rgba(0,0,0,.18);
-      --dot-color:   rgba(0,0,0,.04);
+      --bg:          #dfdbcd;
+      --surface:     #e9e5d9;
+      --card:        #efece1;
+      --card-hover:  #f4f2e8;
+      --card-sel:    #e6e0cd;
+      --border:      #b3ae9d;
+      --border-hi:   #8a8577;
+      --accent:      #46709f;
+      --accent-dim:  rgba(70,112,159,.12);
+      --accent-glow: rgba(70,112,159,.22);
+      --text-1:      #2c2a25;
+      --text-2:      #6b675a;
+      --text-3:      #8f8b7d;
+      --green:       #47875f;
+      --green-dim:   rgba(71,135,95,.12);
+      --amber:       #a97c1c;
+      --amber-dim:   rgba(169,124,28,.12);
+      --red:         #b03a2e;
+      --red-dim:     rgba(176,58,46,.1);
+      --shadow:      0 4px 20px rgba(60,55,40,.12);
+      --shadow-lg:   0 32px 80px rgba(60,55,40,.22);
+      --ink:         #44423c;
+      --ink-dim:     rgba(68,66,60,.4);
+      --hatch:       rgba(176,58,46,.26);
+      --grid-fine:   rgba(120,160,200,.20);
+      --grid-major:  rgba(120,160,200,.36);
       --theme-icon:  '🌙';
     }
 
@@ -77,8 +85,12 @@
       content: '';
       position: fixed;
       inset: 0;
-      background-image: radial-gradient(circle, var(--dot-color) 1px, transparent 1px);
-      background-size: 28px 28px;
+      background-image:
+        linear-gradient(var(--grid-fine) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid-fine) 1px, transparent 1px),
+        linear-gradient(var(--grid-major) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid-major) 1px, transparent 1px);
+      background-size: 16px 16px, 16px 16px, 80px 80px, 80px 80px;
       pointer-events: none;
       z-index: 0;
     }
@@ -110,7 +122,7 @@
     .brand-icon {
       width: 30px; height: 30px;
       background: var(--accent-dim);
-      border: 1px solid rgba(0,196,167,.3);
+      border: 1px solid rgba(127,168,216,.3);
       border-radius: 7px;
       display: flex; align-items: center; justify-content: center;
       font-size: 15px;
@@ -165,7 +177,7 @@
       font-size: 12px; font-weight: 700; letter-spacing: .07em;
       text-transform: uppercase; cursor: pointer; transition: all .14s;
     }
-    .btn-primary:hover { background: var(--accent); color: #07090e; }
+    .btn-primary:hover { background: var(--accent); color: #202124; }
     .btn-ghost {
       display: inline-flex; align-items: center; gap: 5px;
       padding: 6px 13px;
@@ -201,7 +213,7 @@
       font-size: 12px; font-weight: 700; letter-spacing: .07em;
       text-transform: uppercase; cursor: pointer; transition: all .14s;
     }
-    .btn-amber:hover { background: var(--amber); color: #07090e; }
+    .btn-amber:hover { background: var(--amber); color: #202124; }
 
     /* ===== STATS BAR ===== */
     .stats-bar {
@@ -285,7 +297,7 @@
       transition: background .15s;
     }
     .dispatcher-card:hover { border-color: var(--border-hi); background: var(--card-hover); }
-    .dispatcher-card:hover::before { background: rgba(0,196,167,.35); }
+    .dispatcher-card:hover::before { background: rgba(127,168,216,.35); }
     .dispatcher-card.selected { border-color: var(--accent); background: var(--card-sel); }
     .dispatcher-card.selected::before { background: var(--accent); }
     .dc-header {
@@ -344,10 +356,10 @@
       font-family: 'Barlow Condensed', sans-serif;
       letter-spacing: .06em; text-transform: uppercase;
     }
-    .pill.green { background: var(--green-dim); color: var(--green); border: 1px solid rgba(0,212,122,.2); }
-    .pill.amber { background: var(--amber-dim); color: var(--amber); border: 1px solid rgba(245,166,35,.2); }
+    .pill.green { background: var(--green-dim); color: var(--green); border: 1px solid rgba(111,191,138,.2); }
+    .pill.amber { background: var(--amber-dim); color: var(--amber); border: 1px solid rgba(217,165,69,.2); }
     .pill.red   { background: var(--red-dim);   color: var(--red);   border: 1px solid rgba(255,64,64,.2); }
-    .pill.blue  { background: var(--accent-dim); color: var(--accent); border: 1px solid rgba(0,196,167,.2); }
+    .pill.blue  { background: var(--accent-dim); color: var(--accent); border: 1px solid rgba(127,168,216,.2); }
     .pill-dot { width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
 
     /* ===== DRIVER PANEL ===== */
@@ -395,7 +407,7 @@
       cursor: pointer; transition: all .14s;
     }
     .filter-btn:hover { color: var(--text-1); }
-    .filter-btn.active { background: var(--accent-dim); color: var(--accent); border-color: rgba(0,196,167,.3); }
+    .filter-btn.active { background: var(--accent-dim); color: var(--accent); border-color: rgba(127,168,216,.3); }
     .panel-body {
       flex: 1; overflow-y: auto; padding: 8px;
     }
@@ -822,9 +834,9 @@
     .chart-interactive [data-tip] { transition: opacity .12s; }
     .chart-interactive [data-tip]:hover { opacity: .88; }
     /* fault badges */
-    .fault-yes   { background:var(--red-dim);   color:var(--red);   border:1px solid rgba(255,77,77,.25); }
-    .fault-no    { background:var(--green-dim);  color:var(--green); border:1px solid rgba(0,212,122,.25); }
-    .fault-maybe { background:var(--amber-dim);  color:var(--amber); border:1px solid rgba(245,166,35,.25); }
+    .fault-yes   { background:var(--red-dim);   color:var(--red);   border:1px solid rgba(224,85,69,.25); }
+    .fault-no    { background:var(--green-dim);  color:var(--green); border:1px solid rgba(111,191,138,.25); }
+    .fault-maybe { background:var(--amber-dim);  color:var(--amber); border:1px solid rgba(217,165,69,.25); }
     .fault-none  { background:var(--card);       color:var(--text-2);border:1px solid var(--border); }
 
     .ret-summary-grid {
@@ -860,12 +872,103 @@
       cursor: pointer; transition: all .14s; border: 1px solid transparent;
     }
     .fault-btn.sel-yes   { background:var(--red);   color:#fff; border-color:var(--red); }
-    .fault-btn.sel-no    { background:var(--green);  color:#07090e; border-color:var(--green); }
-    .fault-btn.sel-maybe   { background:var(--amber);  color:#07090e; border-color:var(--amber); }
-    .fault-btn.sel-company { background:var(--accent); color:#07090e; border-color:var(--accent); }
+    .fault-btn.sel-no    { background:var(--green);  color:#202124; border-color:var(--green); }
+    .fault-btn.sel-maybe   { background:var(--amber);  color:#202124; border-color:var(--amber); }
+    .fault-btn.sel-company { background:var(--accent); color:#202124; border-color:var(--accent); }
     .fault-btn:not([class*="sel-"]) { background:var(--card); color:var(--text-2); border-color:var(--border-hi); }
     .fault-btn:hover:not([class*="sel-"]) { color:var(--text-1); border-color:var(--text-2); }
 
+
+    /* ============ BLUEPRINT / VELLUM DNA ============ */
+    /* corner registration marks on key cards (background layers, no pseudo conflicts) */
+    .dispatcher-card, .ret-kpi {
+      background-image:
+        linear-gradient(var(--ink) 0 0), linear-gradient(var(--ink) 0 0),
+        linear-gradient(var(--ink) 0 0), linear-gradient(var(--ink) 0 0),
+        linear-gradient(var(--ink) 0 0), linear-gradient(var(--ink) 0 0),
+        linear-gradient(var(--ink) 0 0), linear-gradient(var(--ink) 0 0);
+      background-repeat: no-repeat;
+      background-position: left top, left top, right top, right top,
+                           left bottom, left bottom, right bottom, right bottom;
+      background-size: 9px 1.5px, 1.5px 9px, 9px 1.5px, 1.5px 9px,
+                       9px 1.5px, 1.5px 9px, 9px 1.5px, 1.5px 9px;
+    }
+    /* dimension line with end ticks between stat value and label */
+    .dc-stat-lbl, .ret-kpi-lbl {
+      display: block;
+      background-image:
+        linear-gradient(var(--ink-dim) 0 0),
+        linear-gradient(var(--ink-dim) 0 0),
+        linear-gradient(var(--ink-dim) 0 0);
+      background-repeat: no-repeat;
+      background-position: left top, right top, left 3px;
+      background-size: 1px 7px, 1px 7px, 100% 1px;
+      padding-top: 10px;
+      margin-top: 4px;
+    }
+    /* balloon callout = leaderboard rank, like part numbers on an assembly drawing */
+    .bp-balloon {
+      width: 30px; height: 30px; border-radius: 50%;
+      border: 1.5px solid currentColor;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-family: 'DM Mono', monospace; font-size: 13px; font-weight: 500;
+      flex-shrink: 0;
+    }
+    /* red-pencil section hatching for flagged values */
+    .bp-hatch {
+      background: repeating-linear-gradient(45deg, var(--hatch) 0 1.5px, transparent 1.5px 6px);
+      border: 1px solid var(--red);
+      padding: 1px 5px;
+      display: inline-block;
+    }
+    .dc-stat-val.c-red {
+      background: repeating-linear-gradient(45deg, var(--hatch) 0 1.5px, transparent 1.5px 6px);
+      border: 1px solid var(--red);
+      padding: 0 5px;
+    }
+    /* sheet title-strip treatment for section headers */
+    .section-title { border-bottom: 1.5px solid var(--ink); padding-bottom: 4px; display: inline-block; }
+
+    /* ============ PLOTTER LOAD-IN (initial load + main tab switches) ============ */
+    #main { position: relative; }
+    #main::after {
+      content: ''; position: absolute; top: 0; bottom: 0; left: -150px; width: 150px;
+      z-index: 40; pointer-events: none; opacity: 0;
+      background: linear-gradient(90deg, transparent 0%,
+        rgba(240,237,226,.10) 86%, rgba(240,237,226,.16) 94%,
+        var(--ink) 96%, var(--ink) 97.5%, transparent 98.5%);
+    }
+    [data-theme="light"] #main::after {
+      background: linear-gradient(90deg, transparent 0%,
+        rgba(255,253,244,.45) 86%, rgba(255,253,244,.6) 94%,
+        var(--ink) 96%, var(--ink) 97.5%, transparent 98.5%);
+    }
+    #main.play::after { animation: bp-plot 2s cubic-bezier(.45,.05,.55,.95) .05s both; }
+    #main.play > * { animation: bp-fade .3s ease both; }
+    #main.play .archive-wrap > *,
+    #main.play .dispatcher-grid > * { animation: bp-rise .38s ease both; }
+    #main.play .archive-wrap > *:nth-child(1), #main.play .dispatcher-grid > *:nth-child(1) { animation-delay: .12s; }
+    #main.play .archive-wrap > *:nth-child(2), #main.play .dispatcher-grid > *:nth-child(2) { animation-delay: .24s; }
+    #main.play .archive-wrap > *:nth-child(3), #main.play .dispatcher-grid > *:nth-child(3) { animation-delay: .36s; }
+    #main.play .archive-wrap > *:nth-child(4), #main.play .dispatcher-grid > *:nth-child(4) { animation-delay: .46s; }
+    #main.play .archive-wrap > *:nth-child(5), #main.play .dispatcher-grid > *:nth-child(5) { animation-delay: .56s; }
+    #main.play .archive-wrap > *:nth-child(6), #main.play .dispatcher-grid > *:nth-child(6) { animation-delay: .66s; }
+    #main.play .archive-wrap > *:nth-child(7), #main.play .dispatcher-grid > *:nth-child(7) { animation-delay: .74s; }
+    #main.play .archive-wrap > *:nth-child(8), #main.play .dispatcher-grid > *:nth-child(8) { animation-delay: .82s; }
+    #main.play .archive-wrap > *:nth-child(9), #main.play .dispatcher-grid > *:nth-child(9) { animation-delay: .90s; }
+    #main.play .archive-wrap > *:nth-child(10), #main.play .dispatcher-grid > *:nth-child(10) { animation-delay: .98s; }
+    #main.play .archive-wrap > *:nth-child(n+11), #main.play .dispatcher-grid > *:nth-child(n+11) { animation-delay: 1.05s; }
+    @keyframes bp-fade { from { opacity: 0; } }
+    @keyframes bp-rise { from { opacity: 0; transform: translateY(7px); } }
+    @keyframes bp-plot {
+      0% { transform: translateX(0); opacity: 0; }
+      6% { opacity: 1; }
+      88% { opacity: 1; }
+      100% { transform: translateX(2400px); opacity: 0; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #main.play::after, #main.play > *, #main.play .archive-wrap > *, #main.play .dispatcher-grid > * { animation: none !important; }
+    }
   </style>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
@@ -888,7 +991,7 @@
       <label class="form-label">Password</label>
       <input class="form-input" id="login-pass" type="password" placeholder="••••••••" style="width:100%;" onkeydown="if(event.key==='Enter')doSignIn()">
     </div>
-    <div id="login-error" style="display:none;margin-bottom:12px;padding:8px 10px;background:var(--red-dim);border:1px solid rgba(255,77,77,.25);border-radius:var(--radius);color:var(--red);font-size:11px;"></div>
+    <div id="login-error" style="display:none;margin-bottom:12px;padding:8px 10px;background:var(--red-dim);border:1px solid rgba(224,85,69,.25);border-radius:var(--radius);color:var(--red);font-size:11px;"></div>
     <button class="btn-primary" style="width:100%;justify-content:center;" onclick="doSignIn()">Sign In</button>
   </div>
 </div>
@@ -947,10 +1050,10 @@ function dispPerf(dispId){
 const ROLES = ['Senior Load Manager','Load Manager','Dispatcher','Trainee Dispatcher','Assistant'];
 const VEHICLE_CODES = {
   LPF: {label:'LPF — Lease Purchase, Flatbed', color:'#4b8bd4'},
-  OOF: {label:'OOF — Owner Operator, Flatbed', color:'#00c4a7'},
+  OOF: {label:'OOF — Owner Operator, Flatbed', color:'#56aab8'},
   CDF: {label:'CDF — Company Driver, Flatbed', color:'#e8a830'},
   LPR: {label:'LPR — Lease Purchase, Reefer',  color:'#7b5fc0'},
-  OOR: {label:'OOR — Owner Operator, Reefer',  color:'#00d47a'},
+  OOR: {label:'OOR — Owner Operator, Reefer',  color:'#6fbf8a'},
   CDR: {label:'CDR — Company Driver, Reefer',  color:'#e8503a'},
 };
 const PAY_TYPES = ['CPM','Percentage','Salary','Percentage + FSC'];
@@ -976,6 +1079,10 @@ let S = {
   drvFilter: 'all',
   archDisp: 'all',
   search: '',
+  afterHours: null,    // after-hours shift rotation (people, shift windows, overrides)
+  samsara: {},         // Samsara API settings (token, orgId, days) — edited in Settings
+  harshReviewed: {},   // Samsara eventId -> {at, by} — RR owns review state
+  samsaraMap: {},      // Samsara driverId -> RR driver id (manual overrides)
 };
 
 // ============================================================
@@ -1010,6 +1117,7 @@ function showLoginScreen() {
 function showApp() {
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('app').style.display = '';
+  setTimeout(plotIn, 350);
 }
 
 function doSignIn() {
@@ -1040,10 +1148,10 @@ function setSyncStatus(s) {
   if (!el) return;
   const map = {
     loading: ['#8aabca', '⟳ Loading'],
-    saving:  ['#f5a623', '↑ Saving'],
-    synced:  ['#00d47a', '✓ Synced'],
-    offline: ['#f5a623', '⚡ Offline'],
-    error:   ['#ff4d4d', '✕ Error'],
+    saving:  ['#d9a545', '↑ Saving'],
+    synced:  ['#6fbf8a', '✓ Synced'],
+    offline: ['#d9a545', '⚡ Offline'],
+    error:   ['#e05545', '✕ Error'],
   };
   const [color, label] = map[s] || map.synced;
   el.style.background = color;
@@ -1054,7 +1162,7 @@ function setSyncStatus(s) {
 
 // save(): write localStorage immediately, sync Firestore in background
 function save() {
-  localStorage.setItem(SK, JSON.stringify({ dispatchers: S.dispatchers, drivers: S.drivers, coordinators: S.coordinators, todayChecks: S.todayChecks, dispatcherUsernameMap: S.dispatcherUsernameMap }));
+  localStorage.setItem(SK, JSON.stringify({ dispatchers: S.dispatchers, drivers: S.drivers, coordinators: S.coordinators, todayChecks: S.todayChecks, dispatcherUsernameMap: S.dispatcherUsernameMap, harshReviewed: S.harshReviewed, samsaraMap: S.samsaraMap, samsara: S.samsara, afterHours: S.afterHours }));
   setSyncStatus('saving');
   STATE_REF.set({
     dispatchers:  S.dispatchers,
@@ -1062,6 +1170,10 @@ function save() {
     coordinators: S.coordinators || [],
     todayChecks:  S.todayChecks || {},
     dispatcherUsernameMap: S.dispatcherUsernameMap || {},
+    harshReviewed: S.harshReviewed || {},
+    samsaraMap:    S.samsaraMap || {},
+    samsara:       S.samsara || {},
+    afterHours:    S.afterHours || null,
     _updated:     firebase.firestore.FieldValue.serverTimestamp()
   })
   .then(() => { setSyncStatus('synced'); const b=document.getElementById('fb-err-banner'); if(b) b.remove(); })
@@ -1154,7 +1266,10 @@ async function load() {
       S.coordinators = d.coordinators || [];
       S.todayChecks  = d.todayChecks  || {};
       S.dispatcherUsernameMap = d.dispatcherUsernameMap || {};
-      S.dispatcherUsernameMap = d.dispatcherUsernameMap || {};
+      S.harshReviewed = d.harshReviewed || {};
+      S.samsaraMap    = d.samsaraMap    || {};
+      S.samsara       = d.samsara       || {};
+      S.afterHours    = d.afterHours    || null;
       localStorage.setItem(SK, JSON.stringify({ dispatchers: S.dispatchers, drivers: S.drivers, coordinators: S.coordinators, todayChecks: S.todayChecks }));
       setSyncStatus('synced');
       loadedFromFirebase = true;
@@ -1478,7 +1593,7 @@ const RANK_TIERS = [
   {min:23,max:30, name:'Skopje Sergeant',        shortName:'Skopje',    color:'#7b5fc0', bg:'rgba(123,95,192,.12)', desc:'Running the capital. Serious about this now.'},
   {min:31,max:38, name:'Radovish Ranger',         shortName:'Radovish',  color:'#e8a830', bg:'rgba(232,168,48,.12)', desc:'Repping Radovish. Grinding hard, no days off.'},
   {min:39,max:46, name:'Lord of Pella',           shortName:'Pella',     color:'#e8503a', bg:'rgba(232,80,58,.12)',  desc:'Born in the capital of ancient Macedonia. One step from the throne.'},
-  {min:47,max:50, name:'Aleksandar Makedonski',  shortName:'Aleksandar',color:'#00c4a7', bg:'rgba(0,196,167,.12)', desc:'The GOAT. Conquered the known world. Now conquering dispatch.'},
+  {min:47,max:50, name:'Aleksandar Makedonski',  shortName:'Aleksandar',color:'#7fa8d8', bg:'rgba(127,168,216,.12)', desc:'The GOAT. Conquered the known world. Now conquering dispatch.'},
 ];
 
 function getDispRank(level) {
@@ -1588,7 +1703,7 @@ function renderLeaderboard() {
       const bg       = isTop3 ? r.tier.bg : '';
       const borderC  = isTop3 ? r.tier.color+'44' : 'var(--border)';
       return '<div style="display:flex;align-items:center;gap:14px;background:var(--card)'+(bg?';background:'+bg:'')+';border:1px solid '+borderC+';border-radius:var(--radius-lg);padding:14px 16px;margin-bottom:8px;cursor:pointer;" onclick="openDispPanel(\''+r.d.id+'\')">'+
-        '<span style="font-size:22px;font-weight:700;font-family:DM Mono,monospace;color:'+posColor+';width:30px;text-align:center;flex-shrink:0;">'+(i+1)+'</span>'+
+        '<span class="bp-balloon" style="color:'+posColor+';">'+(i+1)+'</span>'+
         rankIcon(r.xpData.level, 40)+
         '<div style="flex:1;min-width:0;">'+
           '<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;">'+
@@ -1605,7 +1720,7 @@ function renderLeaderboard() {
         '</div>'+
         '<div style="display:flex;gap:16px;flex-shrink:0;text-align:right;">'+
           '<div><div style="font-family:DM Mono,monospace;font-size:13px;font-weight:700;color:var(--accent);">'+(r.s.act+r.s.risk)+'</div><div style="font-size:9px;color:var(--text-2);text-transform:uppercase;letter-spacing:.08em;">Drivers</div></div>'+
-          '<div><div style="font-family:DM Mono,monospace;font-size:13px;font-weight:700;color:'+retColor5(r.s.retAdj)+';">'+(r.s.retAdj!==null?r.s.retAdj+'%':'—')+'</div><div style="font-size:9px;color:var(--text-2);text-transform:uppercase;letter-spacing:.08em;">Retention</div></div>'+
+          '<div><div class="'+((r.s.retAdj!==null&&r.s.retAdj<75)?'bp-hatch':'')+'" style="font-family:DM Mono,monospace;font-size:13px;font-weight:700;color:'+retColor5(r.s.retAdj)+';">'+(r.s.retAdj!==null?r.s.retAdj+'%':'—')+'</div><div style="font-size:9px;color:var(--text-2);text-transform:uppercase;letter-spacing:.08em;">Retention</div></div>'+
           (r.dp?'<div><div style="font-family:DM Mono,monospace;font-size:13px;font-weight:700;">$'+r.dp.avgRev.toLocaleString()+'</div><div style="font-size:9px;color:var(--text-2);text-transform:uppercase;letter-spacing:.08em;">Avg Rev/Wk</div></div>':'')+''+
         '</div>'+
       '</div>';
@@ -1630,11 +1745,11 @@ function openRankInfoModal() {
     '</div>'+
     '<div class="pf-label" style="margin-bottom:8px;">Retention XP — uses adjusted score (fault-reviewed terminations excluded)</div>'+
     '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:18px;">'+
-      '<div style="padding:8px;background:var(--green-dim);border:1px solid rgba(0,212,122,.2);border-radius:var(--radius);text-align:center;"><div style="font-family:DM Mono,monospace;font-size:14px;font-weight:700;color:var(--green);">+600</div><div style="font-size:10px;color:var(--text-2);margin-top:3px;">90%+</div></div>'+
+      '<div style="padding:8px;background:var(--green-dim);border:1px solid rgba(111,191,138,.2);border-radius:var(--radius);text-align:center;"><div style="font-family:DM Mono,monospace;font-size:14px;font-weight:700;color:var(--green);">+600</div><div style="font-size:10px;color:var(--text-2);margin-top:3px;">90%+</div></div>'+
       '<div style="padding:8px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);text-align:center;"><div style="font-family:DM Mono,monospace;font-size:14px;font-weight:700;color:var(--text-1);">+200</div><div style="font-size:10px;color:var(--text-2);margin-top:3px;">80–89%</div></div>'+
       '<div style="padding:8px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);text-align:center;"><div style="font-family:DM Mono,monospace;font-size:14px;font-weight:700;color:var(--text-2);">±0</div><div style="font-size:10px;color:var(--text-2);margin-top:3px;">70–79%</div></div>'+
-      '<div style="padding:8px;background:var(--amber-dim);border:1px solid rgba(245,166,35,.2);border-radius:var(--radius);text-align:center;"><div style="font-family:DM Mono,monospace;font-size:14px;font-weight:700;color:var(--amber);">−300</div><div style="font-size:10px;color:var(--text-2);margin-top:3px;">60–69%</div></div>'+
-      '<div style="padding:8px;background:var(--red-dim);border:1px solid rgba(255,77,77,.2);border-radius:var(--radius);text-align:center;"><div style="font-family:DM Mono,monospace;font-size:14px;font-weight:700;color:var(--red);">−700</div><div style="font-size:10px;color:var(--text-2);margin-top:3px;">Below 60%</div></div>'+
+      '<div style="padding:8px;background:var(--amber-dim);border:1px solid rgba(217,165,69,.2);border-radius:var(--radius);text-align:center;"><div style="font-family:DM Mono,monospace;font-size:14px;font-weight:700;color:var(--amber);">−300</div><div style="font-size:10px;color:var(--text-2);margin-top:3px;">60–69%</div></div>'+
+      '<div style="padding:8px;background:var(--red-dim);border:1px solid rgba(224,85,69,.2);border-radius:var(--radius);text-align:center;"><div style="font-family:DM Mono,monospace;font-size:14px;font-weight:700;color:var(--red);">−700</div><div style="font-size:10px;color:var(--text-2);margin-top:3px;">Below 60%</div></div>'+
     '</div>'+
     '<div class="pf-label" style="margin-bottom:10px;">Rank Tiers</div>'+
     '<div style="display:flex;flex-direction:column;gap:6px;">'+
@@ -2617,6 +2732,8 @@ function renderTodayHub() {
       <button class="btn-primary" onclick="copyBriefing()">&#128203; Copy Weekly Briefing</button>
     </div>
 
+    ${ahTodayCardHTML()}
+
     ${hub.totalCount === 0 ? `
       <div class="empty-state" style="height:220px;">
         <div class="empty-icon">\u2705</div>
@@ -3230,7 +3347,7 @@ function showUsernameMappingScreen(unmapped, usernamesSeen, parsed) {
   }).join('');
 
   status.innerHTML = `
-    <div style="padding:12px;background:var(--amber-dim);border:1px solid rgba(245,166,35,.25);border-radius:var(--radius);margin-bottom:12px;">
+    <div style="padding:12px;background:var(--amber-dim);border:1px solid rgba(217,165,69,.25);border-radius:var(--radius);margin-bottom:12px;">
       <div style="color:var(--amber);font-weight:700;font-family:'Barlow Condensed',sans-serif;letter-spacing:.06em;text-transform:uppercase;font-size:13px;">\u26A0 ${unmapped.length} New Username${unmapped.length!==1?'s':''} Found</div>
       <div style="color:var(--text-1);font-size:12px;margin-top:4px;">Map each one to a dispatcher \u2014 this only needs doing once, future uploads remember it.</div>
     </div>
@@ -3338,7 +3455,7 @@ async function commitLoadsUpload(parsed) {
     await saveLoadsBatch(records);
     const dates = records.map(r => r.deliveryDate).filter(Boolean).sort();
     status.innerHTML = `
-      <div style="padding:12px;background:var(--green-dim);border:1px solid rgba(0,212,122,.2);border-radius:var(--radius);">
+      <div style="padding:12px;background:var(--green-dim);border:1px solid rgba(111,191,138,.2);border-radius:var(--radius);">
         <div style="color:var(--green);font-weight:700;font-family:'Barlow Condensed',sans-serif;letter-spacing:.06em;text-transform:uppercase;font-size:13px;">\u2713 Upload Complete</div>
         <div style="color:var(--text-1);font-size:12px;margin-top:4px;">${records.length} loads stored${dates.length?' \u2014 '+dates[0]+' to '+dates[dates.length-1]:''}</div>
       </div>
@@ -3627,10 +3744,12 @@ function renderHeader() {
           <button class="nav-more-item ${S.view==='leaderboard'?'active':''}" onclick="setView('leaderboard')">Leaderboard</button>
           <button class="nav-more-item ${S.view==='alldrivers'?'active':''}" onclick="setView('alldrivers')">Drivers</button>
           <button class="nav-more-item ${S.view==='archive'?'active':''}" onclick="setView('archive')">Archive</button>
+          <button class="nav-more-item" onclick="toggleNavMore(event);openSamsaraSettings()">Settings</button>
         </div>
       </div>
     </nav>
     <div class="header-actions">
+      <button id="harsh-badge" onclick="openSamsaraSettings()" title="Samsara harsh events — click to configure or refresh" style="padding:4px 9px;border-radius:5px;border:1px solid var(--border-hi);background:transparent;font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;cursor:pointer;"></button>
       <button onclick="openLocalBackupsModal()" title="View and restore local backups" style="padding:4px 9px;border-radius:5px;border:1px solid var(--border-hi);background:transparent;color:var(--text-2);font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;cursor:pointer;" onmouseover="this.style.color='var(--text-1)'" onmouseout="this.style.color='var(--text-2)'">&#128337; Backups</button>
       <button onclick="doSignOut()" title="Sign out" style="padding:4px 9px;border-radius:5px;border:1px solid var(--border-hi);background:transparent;color:var(--text-2);font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;cursor:pointer;" onmouseover="this.style.color='var(--text-1)'" onmouseout="this.style.color='var(--text-2)'">&#8631; Sign Out</button>
       <button onclick="forceReloadFromCloud()" title="Force reload all data from Firebase" style="padding:4px 9px;border-radius:5px;border:1px solid var(--border-hi);background:transparent;color:var(--text-2);font-family:Barlow Condensed,sans-serif;font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;cursor:pointer;" onmouseover="this.style.color='var(--text-1)'" onmouseout="this.style.color='var(--text-2)'">&#x2601; Reload</button>
@@ -3772,7 +3891,7 @@ function renderGrid() {
 
   const dispIdsInView = new Set(dispList.map(d=>d.id));
   const unassigned = S.drivers.filter(d => !d.dispatcherId && d.status !== 'terminated');
-  const banner = (!scopeLabel && unassigned.length) ? `<div style="grid-column:1/-1;display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--amber-dim);border:1px solid rgba(245,166,35,.3);border-radius:var(--radius);margin-bottom:2px;font-size:12px;color:var(--amber);"><span style="font-size:16px;">⚠</span><strong style="margin-right:4px;">${unassigned.length} driver${unassigned.length>1?'s':''} unassigned:</strong><span style="color:var(--text-1);">${unassigned.map(d=>d.name).join(', ')}</span><button onclick="event.stopPropagation();openUnassignedModal()" style="margin-left:auto;padding:3px 10px;border-radius:5px;border:1px solid var(--amber);background:var(--amber-dim);color:var(--amber);font-family:'Barlow Condensed',sans-serif;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;">Assign →</button></div>` : '';
+  const banner = (!scopeLabel && unassigned.length) ? `<div style="grid-column:1/-1;display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--amber-dim);border:1px solid rgba(217,165,69,.3);border-radius:var(--radius);margin-bottom:2px;font-size:12px;color:var(--amber);"><span style="font-size:16px;">⚠</span><strong style="margin-right:4px;">${unassigned.length} driver${unassigned.length>1?'s':''} unassigned:</strong><span style="color:var(--text-1);">${unassigned.map(d=>d.name).join(', ')}</span><button onclick="event.stopPropagation();openUnassignedModal()" style="margin-left:auto;padding:3px 10px;border-radius:5px;border:1px solid var(--amber);background:var(--amber-dim);color:var(--amber);font-family:'Barlow Condensed',sans-serif;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;">Assign →</button></div>` : '';
 
   el.innerHTML = banner + dispList.map(d => dispCard(d)).join('');
 }
@@ -3786,8 +3905,8 @@ function dispCard(d) {
       <div class="dc-header">
         <div class="dc-avatar">${initials(d.name)}</div>
         <div style="flex:1;min-width:0;">
-          <div class="dc-name">${d.name}${d.fleetType?` <span style="font-size:9px;font-weight:700;letter-spacing:.05em;padding:1px 6px;border-radius:99px;background:${d.fleetType==='Flatbed'?'rgba(75,139,212,.15)':'rgba(0,196,167,.15)'};color:${d.fleetType==='Flatbed'?'#4b8bd4':'#00c4a7'};vertical-align:middle;">${d.fleetType==='Flatbed'?'🟦':'🟩'} ${d.fleetType}</span>`:''}</div>
-          <div class="dc-role">${d.role}${(()=>{const co=coordForDisp(d.id);return co?` <span style="color:var(--accent);font-size:10px;">&#183; ${co.name.split(' ')[0]}</span>`:''})()}</div>
+          <div class="dc-name">${d.name}${d.fleetType?` <span style="font-size:9px;font-weight:700;letter-spacing:.05em;padding:1px 6px;border-radius:99px;background:${d.fleetType==='Flatbed'?'rgba(75,139,212,.15)':'rgba(111,191,138,.15)'};color:${d.fleetType==='Flatbed'?'#4b8bd4':'#6fbf8a'};vertical-align:middle;">${d.fleetType==='Flatbed'?'🟦':'🟩'} ${d.fleetType}</span>`:''}</div>
+          <div class="dc-role">${d.role}${(()=>{const co=coordForDisp(d.id);return co?` <span style="color:var(--accent);font-size:10px;">&#183; ${co.name.split(' ')[0]}</span>`:''})()} ${harshDispBadge(d.id)}</div>
         </div>
         <button class="dc-edit-btn" onclick="event.stopPropagation();openDispModal('${d.id}')">Edit</button>
       </div>
@@ -3885,7 +4004,7 @@ function drvCard(r) {
   return `
     <div class="driver-card" onclick="openDrvView('${r.id}')">
       <div class="drv-top">
-        <span class="drv-name">${r.name}${r.vehicleCode&&VEHICLE_CODES[r.vehicleCode]?` <span style="font-size:9px;font-weight:700;letter-spacing:.04em;padding:1px 5px;border-radius:99px;background:${VEHICLE_CODES[r.vehicleCode].color}22;color:${VEHICLE_CODES[r.vehicleCode].color};vertical-align:middle;">${r.vehicleCode}</span>`:''}</span>
+        <span class="drv-name">${r.name} ${harshDrvChip(r.id)}${r.vehicleCode&&VEHICLE_CODES[r.vehicleCode]?` <span style="font-size:9px;font-weight:700;letter-spacing:.04em;padding:1px 5px;border-radius:99px;background:${VEHICLE_CODES[r.vehicleCode].color}22;color:${VEHICLE_CODES[r.vehicleCode].color};vertical-align:middle;">${r.vehicleCode}</span>`:''}</span>
         <span class="pill ${col}"><span class="pill-dot"></span>${sLabel(r.status)}</span>
       </div>
       <div class="drv-meta">
@@ -4338,11 +4457,11 @@ function svgLine(pts) {
     const cx=xp(i), cy=yp(p.rev);
     const prev = i>0 ? pts[i-1] : null;
     const chg  = prev ? Math.round((p.rev-prev.rev)/prev.rev*100) : null;
-    const chgSpan = chg!==null ? (chg>=0 ? ' <tspan style="color:#00d47a">+'+chg+'%</tspan>' : ' <tspan style="color:#ff4d4d">'+chg+'%</tspan>') : '';
+    const chgSpan = chg!==null ? (chg>=0 ? ' <tspan style="color:#6fbf8a">+'+chg+'%</tspan>' : ' <tspan style="color:#e05545">'+chg+'%</tspan>') : '';
     const tipLines = p.week+'|$'+p.rev.toLocaleString()+chgSpan+'|Click to see driver breakdown';
     return '<g data-action="week:'+p.week+'" data-tip="'+tipLines+'" class="chart-dot-group">'+
       '<circle cx="'+cx+'" cy="'+cy+'" r="12" fill="transparent"/>'+
-      '<circle cx="'+cx+'" cy="'+cy+'" r="4" fill="#00c4a7" stroke="#07090e" stroke-width="2" class="dot-vis"/>'+
+      '<circle cx="'+cx+'" cy="'+cy+'" r="4" fill="#7fa8d8" stroke="#202124" stroke-width="2" class="dot-vis"/>'+
     '</g>';
   }).join('');
   const xlbls = pts.map((p,i) => {
@@ -4352,11 +4471,11 @@ function svgLine(pts) {
   return '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:100%;">'+
     '<style>.dot-vis{transition:r .12s,fill .12s;} .chart-dot-group:hover .dot-vis{r:6;fill:#fff;}</style>'+
     '<defs><linearGradient id="lg" x1="0" y1="0" x2="0" y2="1">'+
-    '<stop offset="0%" stop-color="#00c4a7" stop-opacity="0.2"/>'+
-    '<stop offset="100%" stop-color="#00c4a7" stop-opacity="0.01"/></linearGradient></defs>'+
+    '<stop offset="0%" stop-color="#7fa8d8" stop-opacity="0.2"/>'+
+    '<stop offset="100%" stop-color="#7fa8d8" stop-opacity="0.01"/></linearGradient></defs>'+
     grids+
     '<polygon points="'+area+'" fill="url(#lg)"/>'+
-    '<polyline points="'+poly+'" fill="none" stroke="#00c4a7" stroke-width="2.5" stroke-linejoin="round"/>'+
+    '<polyline points="'+poly+'" fill="none" stroke="#7fa8d8" stroke-width="2.5" stroke-linejoin="round"/>'+
     dots+xlbls+'</svg>';
 }
 
@@ -4679,7 +4798,7 @@ function coordCard(c) {
     ? '<div style="padding:12px 0;font-size:12px;color:var(--text-2);font-style:italic;">No dispatchers assigned yet — click Edit to assign</div>'
     : '';
 
-  const fleetBadgeColors = { Flatbed:['#4b8bd4','rgba(75,139,212,.15)','🟦'], Reefer:['#00c4a7','rgba(0,196,167,.15)','🟩'], Both:['#e8a830','rgba(232,168,48,.15)','🟦🟩'] };
+  const fleetBadgeColors = { Flatbed:['#4b8bd4','rgba(75,139,212,.15)','🟦'], Reefer:['#6fbf8a','rgba(111,191,138,.15)','🟩'], Both:['#e8a830','rgba(232,168,48,.15)','🟦🟩'] };
   const fbInfo = c.fleetType ? fleetBadgeColors[c.fleetType] : null;
   const fleetBadgeHtml = fbInfo ? ' <span style="font-size:9px;font-weight:700;letter-spacing:.05em;padding:1px 6px;border-radius:99px;background:'+fbInfo[1]+';color:'+fbInfo[0]+';vertical-align:middle;">'+fbInfo[2]+' '+c.fleetType+'</span>' : '';
 
@@ -4810,7 +4929,7 @@ function renderRetention() {
     const lbl = { yes:'Dispatcher', no:'Not Dispatcher', maybe:'Unclear', company:'Company', coordinator:'Coordinator' };
     const cls = map[f] || 'fault-none';
     const txt = lbl[f] || 'Unreviewed';
-    const style = f==='company' ? 'background:var(--accent-dim);color:var(--accent);border:1px solid rgba(0,196,167,.25);' : '';
+    const style = f==='company' ? 'background:var(--accent-dim);color:var(--accent);border:1px solid rgba(127,168,216,.25);' : '';
     return `<span class="pill ${cls}" style="${style}">${txt}</span>`;
   };
 
@@ -5215,7 +5334,7 @@ function parseWeeklyFile(file) {
         </div>` : '';
 
       LAST_UPLOAD_SUMMARY_HTML = `
-        <div style="padding:12px;background:var(--green-dim);border:1px solid rgba(0,212,122,.2);border-radius:var(--radius);margin-bottom:8px;">
+        <div style="padding:12px;background:var(--green-dim);border:1px solid rgba(111,191,138,.2);border-radius:var(--radius);margin-bottom:8px;">
           <div style="color:var(--green);font-weight:700;font-family:'Barlow Condensed',sans-serif;letter-spacing:.06em;text-transform:uppercase;font-size:13px;">✓ Upload Complete</div>
           <div style="color:var(--text-1);font-size:12px;margin-top:4px;">${totalMatched} driver records updated across ${totalNew} sheet(s)</div>
           ${skipMsg}${unmMsg}
@@ -5237,7 +5356,7 @@ function parseWeeklyFile(file) {
 // ============================================================
 //  ACTIONS
 // ============================================================
-function render() { renderHeader(); renderStats(); renderMain(); }
+function render() { renderHeader(); renderStats(); renderMain(); renderHarshBadge(); }
 
 function setFleetTab(t) {
   S.fleetSubTab = t;
@@ -5254,6 +5373,18 @@ function setFleetTab(t) {
 function setView(v) {
   if (v !== 'search') S.search = '';
   S.view = v; S.sel = null; render();
+  plotIn();
+}
+
+let _plotT = null;
+function plotIn() {
+  const m = document.getElementById('main');
+  if (!m) return;
+  m.classList.remove('play');
+  void m.offsetWidth;
+  m.classList.add('play');
+  clearTimeout(_plotT);
+  _plotT = setTimeout(() => m.classList.remove('play'), 2300);
 }
 
 function toggleNavMore(e) {
@@ -5635,6 +5766,7 @@ function openDrvView(drvId) {
             </div>
           </div>`;
         })()}
+        ${drvHarshHTML(r.id)}
         ${drvPaycheckHTML(r.id)}
         ${drvInterventionsHTML(r.id)}
         <div class="profile-actions">
@@ -5924,6 +6056,717 @@ document.addEventListener('click', function(e) {
   if (!e.target.closest('.nav-more-wrap')) menu.classList.remove('open');
 });
 
+
+// ============================================================
+//  SAMSARA — HARSH EVENT REVIEW
+//  Relay: Cloudflare Worker holds the API token (never in this file).
+//  Review state is owned by Rolling Retention, not Samsara.
+// ============================================================
+
+// Settings live in the Firestore state doc, behind the company login —
+// same place every other app setting lives. Nothing to deploy.
+function samsaraCfg() { return S.samsara || {}; }
+function saveSamsaraCfg(cfg) { S.samsara = Object.assign({}, S.samsara, cfg); save(); }
+
+// Harsh-event behavior labels, and the states that mean a human still owes it a look.
+const SAMSARA_BEHAVIORS = 'Braking,Acceleration,HarshTurn,HarshImpact,Crash';
+const SAMSARA_STATES    = 'needsReview,needsCoaching';
+const SAMSARA_STREAM    = 'https://api.samsara.com/safety-events/stream';
+
+// In-memory only. Events are re-fetchable from Samsara, so they are never
+// written to Firestore — only our review decisions are.
+let HARSH = { events: [], fetchedAt: null, error: null, loading: false };
+
+function normName(s) {
+  return (s || '').toLowerCase().replace(/[^a-z\s]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+// Auto-match on name; S.samsaraMap holds manual overrides keyed by Samsara
+// driver id, exactly like the McLeod username -> dispatcher mapping.
+function matchHarshDriver(ev) {
+  const map = S.samsaraMap || {};
+  if (ev.driverId && map[ev.driverId]) {
+    return S.drivers.find(d => d.id === map[ev.driverId]) || null;
+  }
+  if (ev.driverId && map[ev.driverId] === '__ignore__') return null;
+  const n = normName(ev.driverName);
+  if (!n) return null;
+  let hit = S.drivers.find(d => normName(d.name) === n);
+  if (hit) return hit;
+  // last-name + first-initial fallback ("Jovan Ristov" vs "J. Ristov")
+  const parts = n.split(' ');
+  if (parts.length >= 2) {
+    const last = parts[parts.length - 1], fi = parts[0][0];
+    const cands = S.drivers.filter(d => {
+      const dn = normName(d.name).split(' ');
+      return dn.length >= 2 && dn[dn.length-1] === last && dn[0][0] === fi;
+    });
+    if (cands.length === 1) return cands[0];
+  }
+  return null;
+}
+
+function harshIsReviewed(eventId) {
+  return Boolean((S.harshReviewed || {})[eventId]);
+}
+
+// All unreviewed events, resolved to RR drivers.
+function harshResolved() {
+  return HARSH.events.map(ev => ({ ev, drv: matchHarshDriver(ev) }));
+}
+function harshForDriver(drvId) {
+  return harshResolved().filter(x => x.drv && x.drv.id === drvId).map(x => x.ev);
+}
+function harshOpenForDriver(drvId) {
+  return harshForDriver(drvId).filter(ev => !harshIsReviewed(ev.id));
+}
+function harshOpenForDisp(dispId) {
+  const ids = new Set(drvsByDisp(dispId).map(d => d.id));
+  return harshResolved().filter(x => x.drv && ids.has(x.drv.id) && !harshIsReviewed(x.ev.id));
+}
+function harshUnmatched() {
+  const seen = {};
+  harshResolved().forEach(x => {
+    if (x.drv || harshIsReviewed(x.ev.id)) return;
+    const k = x.ev.driverId || ('name:' + normName(x.ev.driverName));
+    if (!seen[k]) seen[k] = { driverId: x.ev.driverId, driverName: x.ev.driverName, count: 0 };
+    seen[k].count++;
+  });
+  return Object.values(seen);
+}
+function harshOpenTotal() {
+  return harshResolved().filter(x => !harshIsReviewed(x.ev.id)).length;
+}
+
+// ---------- fetch ----------
+async function fetchHarshEvents(silent) {
+  const cfg = samsaraCfg();
+  if (!cfg.token) {
+    HARSH.error = 'not_configured';
+    renderHarshBadge();
+    if (!silent) openSamsaraSettings();
+    return;
+  }
+  HARSH.loading = true; HARSH.error = null;
+  renderHarshBadge();
+  try {
+    HARSH.events = await samsaraFetchEvents(cfg);
+    HARSH.fetchedAt = new Date().toISOString();
+    HARSH.error = null;
+  } catch (e) {
+    HARSH.error = samsaraErrText(e);
+    console.error('Samsara fetch failed:', e);
+  }
+  HARSH.loading = false;
+  render();
+}
+
+// Pull every page of harsh events, newest first. Optional proxy prefix is used
+// only if Samsara blocks the browser (see the note in Settings).
+async function samsaraFetchEvents(cfg) {
+  const startTime = new Date(Date.now() - (cfg.days || 30) * 86400000).toISOString();
+  const base = {
+    startTime,
+    queryByTimeField: 'createdAtTime',
+    behaviorLabels:   SAMSARA_BEHAVIORS,
+    eventStates:      SAMSARA_STATES,
+    includeDriver:    'true',
+    includeAsset:     'true'
+  };
+  const out = [];
+  let after = null;
+  for (let page = 0; page < 20; page++) {
+    const qs = new URLSearchParams(base);
+    if (after) qs.set('after', after);
+    let url = SAMSARA_STREAM + '?' + qs.toString();
+    if (cfg.proxyUrl) url = cfg.proxyUrl.replace(/\/+$/, '') + '/' + url;
+
+    const res = await fetch(url, {
+      headers: { Authorization: 'Bearer ' + cfg.token, Accept: 'application/json' }
+    });
+    if (res.status === 429) { await new Promise(r=>setTimeout(r,1100)); page--; continue; }
+    if (res.status === 401 || res.status === 403) throw new Error('auth:' + res.status);
+    if (!res.ok) throw new Error('http:' + res.status);
+
+    const body = await res.json();
+    (body.data || []).forEach(e => out.push(samsaraNormalize(e, cfg.orgId)));
+
+    const pg = body.pagination || {};
+    if (!pg.hasNextPage || !pg.endCursor) break;
+    after = pg.endCursor;
+    await new Promise(r => setTimeout(r, 220));   // stay under 5 req/sec
+  }
+  out.sort((a,b) => (b.timeMs||0) - (a.timeMs||0));
+  return out;
+}
+
+// Flatten a Samsara event down to what the app actually renders.
+function samsaraNormalize(e, orgId) {
+  const driver = e.driver || {};
+  const asset  = e.asset || e.vehicle || {};
+  const timeMs = e.time ? Date.parse(e.time) : (e.startMs ? Number(e.startMs) : null);
+  return {
+    id:          String(e.id || ''),
+    driverId:    driver.id ? String(driver.id) : null,
+    driverName:  driver.name || null,
+    vehicleId:   asset.id ? String(asset.id) : null,
+    vehicleName: asset.name || null,
+    time:        e.time || (timeMs ? new Date(timeMs).toISOString() : null),
+    timeMs,
+    behaviors:   (e.behaviorLabels || []).map(b => b.name || b.label).filter(Boolean),
+    maxG:        typeof e.maxAccelerationGForce === 'number' ? e.maxAccelerationGForce : null,
+    coachingState: e.coachingState || null,
+    hasVideo:    Boolean(e.downloadForwardVideoUrl || e.downloadInwardVideoUrl),
+    samsaraUrl:  samsaraIncidentUrl(e, asset, timeMs, orgId)
+  };
+}
+
+function samsaraIncidentUrl(e, asset, timeMs, orgId) {
+  if (e.alertEventUrl) return e.alertEventUrl;
+  if (!orgId) return null;
+  if (!asset.id || !timeMs) return 'https://cloud.samsara.com/o/' + orgId + '/fleet/reports/safety';
+  return 'https://cloud.samsara.com/o/' + orgId + '/fleet/reports/safety/vehicle/' + asset.id + '/incident/' + timeMs;
+}
+
+function samsaraErrText(e) {
+  const m = String(e && e.message || e);
+  if (m.startsWith('auth:'))  return 'Token rejected (' + m.split(':')[1] + ') — check the token and that it has Read Safety Events & Scores.';
+  if (m.startsWith('http:'))  return 'Samsara returned ' + m.split(':')[1] + '.';
+  if (/Failed to fetch|NetworkError|CORS/i.test(m)) return 'Browser blocked the call (CORS). See Settings — a proxy URL fixes this.';
+  return m;
+}
+
+// ---------- review (RR-owned) ----------
+function toggleHarshReviewed(eventId, rerenderFn) {
+  S.harshReviewed = S.harshReviewed || {};
+  if (S.harshReviewed[eventId]) {
+    delete S.harshReviewed[eventId];
+  } else {
+    S.harshReviewed[eventId] = {
+      at: new Date().toISOString(),
+      by: (auth.currentUser && auth.currentUser.email) || 'unknown'
+    };
+  }
+  save();
+  if (typeof rerenderFn === 'function') rerenderFn();
+  else render();
+}
+
+function mapSamsaraDriver(samsaraDriverId, rrDriverId) {
+  S.samsaraMap = S.samsaraMap || {};
+  if (rrDriverId) S.samsaraMap[samsaraDriverId] = rrDriverId;
+  else delete S.samsaraMap[samsaraDriverId];
+  save();
+  openSamsaraMapModal();
+}
+
+// ---------- UI fragments ----------
+function harshBehaviorLabel(ev) {
+  return (ev.behaviors && ev.behaviors.length) ? ev.behaviors.join(', ') : 'Harsh Event';
+}
+
+// Badge for a dispatcher card
+function harshDispBadge(dispId) {
+  const n = harshOpenForDisp(dispId).length;
+  if (!n) return '';
+  return `<span onclick="event.stopPropagation();openHarshDispModal('${dispId}')" title="${n} harsh event${n>1?'s':''} need review in Samsara"
+    style="display:inline-flex;align-items:center;gap:4px;font-size:9px;font-weight:700;letter-spacing:.05em;padding:2px 7px;border-radius:99px;
+    background:var(--red-dim);border:1px solid var(--red);color:var(--red);cursor:pointer;vertical-align:middle;">&#9888; ${n} HARSH</span>`;
+}
+
+// Chip for a driver row
+function harshDrvChip(drvId) {
+  const n = harshOpenForDriver(drvId).length;
+  if (!n) return '';
+  return `<span style="font-size:9px;font-weight:700;letter-spacing:.04em;padding:1px 5px;border-radius:99px;
+    background:var(--red-dim);color:var(--red);border:1px solid var(--red);vertical-align:middle;">&#9888; ${n}</span>`;
+}
+
+// Full section for the driver profile modal
+function drvHarshHTML(drvId) {
+  const evs = harshForDriver(drvId);
+  if (!evs.length) return '';
+  const open = evs.filter(e => !harshIsReviewed(e.id)).length;
+  return `<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+    <div class="pf-label" style="margin-bottom:8px;">
+      Samsara Harsh Events — ${evs.length} in window${open?` &middot; <span style="color:var(--red);">${open} need review</span>`:' &middot; all reviewed'}
+    </div>
+    <div style="display:flex;flex-direction:column;gap:6px;">
+      ${evs.map(ev => {
+        const done = harshIsReviewed(ev.id);
+        const meta = (S.harshReviewed||{})[ev.id];
+        return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid ${done?'var(--border)':'var(--red)'};
+          border-radius:var(--radius);background:${done?'transparent':'var(--red-dim)'};">
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:11px;font-weight:700;color:${done?'var(--text-2)':'var(--red)'};font-family:'Barlow Condensed',sans-serif;letter-spacing:.05em;text-transform:uppercase;">
+              ${harshBehaviorLabel(ev)}${ev.hasVideo?' &middot; &#127909;':''}
+            </div>
+            <div class="mono" style="font-size:10px;color:var(--text-2);margin-top:2px;">
+              ${ev.time ? new Date(ev.time).toLocaleString() : '—'}
+              ${ev.vehicleName?` &middot; ${ev.vehicleName}`:''}
+              ${ev.maxG!=null?` &middot; ${ev.maxG.toFixed(2)}g`:''}
+            </div>
+            ${done&&meta?`<div class="mono" style="font-size:9px;color:var(--text-3);margin-top:2px;">Reviewed ${new Date(meta.at).toLocaleDateString()} by ${meta.by}</div>`:''}
+          </div>
+          ${ev.samsaraUrl?`<a href="${ev.samsaraUrl}" target="_blank" rel="noopener" onclick="event.stopPropagation()" class="btn-ghost"
+            style="padding:3px 9px;font-size:10px;text-decoration:none;white-space:nowrap;">Samsara &#8599;</a>`:''}
+          <button class="${done?'btn-ghost':'btn-primary'}" style="padding:3px 9px;font-size:10px;white-space:nowrap;"
+            onclick="event.stopPropagation();toggleHarshReviewed('${ev.id}', ()=>openDrvView('${drvId}'))">
+            ${done?'&#8635; Undo':'&#10003; Reviewed'}
+          </button>
+        </div>`;
+      }).join('')}
+    </div>
+  </div>`;
+}
+
+// ---------- modals ----------
+function openHarshDispModal(dispId) {
+  const disp = dispById(dispId);
+  const rows = harshOpenForDisp(dispId);
+  openModal(`<div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Harsh Events — ${disp?disp.name:''}</div>
+      <button class="modal-close" onclick="closeModal()">&#10005;</button>
+    </div>
+    <div class="modal-body">
+      ${!rows.length?`<div class="empty-state" style="height:120px;"><div class="empty-title">Nothing to review</div></div>`:
+      rows.map(({ev,drv})=>`<div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border:1px solid var(--red);border-radius:var(--radius);background:var(--red-dim);margin-bottom:6px;">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:12px;font-weight:700;">${drv.name}</div>
+          <div class="mono" style="font-size:10px;color:var(--text-2);margin-top:2px;">${harshBehaviorLabel(ev)} &middot; ${ev.time?new Date(ev.time).toLocaleString():'—'}${ev.vehicleName?` &middot; ${ev.vehicleName}`:''}</div>
+        </div>
+        <button class="btn-ghost" style="padding:3px 9px;font-size:10px;" onclick="openDrvView('${drv.id}')">Driver</button>
+        ${ev.samsaraUrl?`<a href="${ev.samsaraUrl}" target="_blank" rel="noopener" class="btn-ghost" style="padding:3px 9px;font-size:10px;text-decoration:none;">Samsara &#8599;</a>`:''}
+        <button class="btn-primary" style="padding:3px 9px;font-size:10px;" onclick="toggleHarshReviewed('${ev.id}', ()=>openHarshDispModal('${dispId}'))">&#10003;</button>
+      </div>`).join('')}
+    </div>
+  </div>`);
+}
+
+function openSamsaraMapModal() {
+  const un = harshUnmatched();
+  const opts = S.drivers.filter(d=>d.status!=='terminated')
+    .sort((a,b)=>a.name.localeCompare(b.name))
+    .map(d=>`<option value="${d.id}">${d.name}</option>`).join('');
+  openModal(`<div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Samsara Driver Mapping</div>
+      <button class="modal-close" onclick="closeModal()">&#10005;</button>
+    </div>
+    <div class="modal-body">
+      <div class="pf-label" style="margin-bottom:10px;">
+        Names that auto-matched are not shown. Map anything left here once and it sticks.
+      </div>
+      ${!un.length?`<div class="empty-state" style="height:120px;"><div class="empty-title">Every event matched a driver</div></div>`:
+      un.map(u=>`<div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border:1px solid var(--amber);border-radius:var(--radius);background:var(--amber-dim);margin-bottom:6px;">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:12px;font-weight:700;">${u.driverName||'(no name)'}</div>
+          <div class="mono" style="font-size:10px;color:var(--text-2);">Samsara ID ${u.driverId||'—'} &middot; ${u.count} event${u.count>1?'s':''}</div>
+        </div>
+        <select class="select-field" style="max-width:200px;" onchange="mapSamsaraDriver('${u.driverId}', this.value)">
+          <option value="">— map to driver —</option>${opts}
+        </select>
+      </div>`).join('')}
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">
+        <div class="pf-label" style="margin-bottom:6px;">Existing manual mappings</div>
+        ${Object.keys(S.samsaraMap||{}).length===0?`<div style="font-size:11px;color:var(--text-2);">None yet.</div>`:
+        Object.entries(S.samsaraMap).map(([sid,rid])=>{
+          const d=S.drivers.find(x=>x.id===rid);
+          return `<div class="mono" style="font-size:10px;color:var(--text-2);display:flex;gap:8px;align-items:center;padding:3px 0;">
+            <span>${sid} &rarr; ${d?d.name:'(missing driver)'}</span>
+            <button class="btn-ghost" style="padding:1px 6px;font-size:9px;" onclick="mapSamsaraDriver('${sid}','')">remove</button>
+          </div>`;}).join('')}
+      </div>
+    </div>
+  </div>`);
+}
+
+function openSamsaraSettings() {
+  const cfg = samsaraCfg();
+  openModal(`<div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Settings — Samsara</div>
+      <button class="modal-close" onclick="closeModal()">&#10005;</button>
+    </div>
+    <div class="modal-body">
+      <div class="pf-label" style="margin-bottom:10px;">
+        Saved to Firestore with the rest of your data, so the whole team shares one setup.
+        Token needs the <strong>Read Safety Events &amp; Scores</strong> scope.
+      </div>
+      <div class="form-group">
+        <label class="form-label">Samsara API Token</label>
+        <input class="input-field" id="sam-token" type="password" placeholder="samsara_api_..." value="${cfg.token||''}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Org ID <span style="color:var(--text-2);font-weight:400;">(the number in cloud.samsara.com/o/<b>12345</b>/...)</span></label>
+        <input class="input-field" id="sam-org" placeholder="12345" value="${cfg.orgId||''}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Lookback window (days)</label>
+        <input class="input-field" id="sam-days" type="number" min="1" max="180" value="${cfg.days||30}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Proxy URL <span style="color:var(--text-2);font-weight:400;">— leave blank unless the test below fails with a CORS error</span></label>
+        <input class="input-field" id="sam-proxy" placeholder="(optional)" value="${cfg.proxyUrl||''}">
+      </div>
+      <div id="sam-test" style="font-size:11px;margin-bottom:10px;min-height:16px;">
+        ${HARSH.error && HARSH.error!=='not_configured'
+          ? `<span style="color:var(--red);">${HARSH.error}</span>`
+          : HARSH.fetchedAt
+            ? `<span style="color:var(--green);">&#10003; Last pull ${new Date(HARSH.fetchedAt).toLocaleString()} — ${HARSH.events.length} events</span>`
+            : ''}
+      </div>
+      <div class="profile-actions">
+        <button class="btn-ghost" onclick="openSamsaraMapModal()">Driver Mapping</button>
+        <button class="btn-ghost" onclick="testSamsara()">Test Connection</button>
+        <button class="btn-primary" onclick="saveSamsaraSettings()">Save</button>
+      </div>
+    </div>
+  </div>`);
+}
+
+function readSamsaraForm() {
+  return {
+    token:    document.getElementById('sam-token').value.trim(),
+    orgId:    document.getElementById('sam-org').value.trim(),
+    days:     parseInt(document.getElementById('sam-days').value, 10) || 30,
+    proxyUrl: document.getElementById('sam-proxy').value.trim()
+  };
+}
+
+function saveSamsaraSettings() {
+  saveSamsaraCfg(readSamsaraForm());
+  closeModal();
+  fetchHarshEvents();
+}
+
+// Test without saving, so a bad token never gets written to Firestore.
+async function testSamsara() {
+  const el = document.getElementById('sam-test');
+  const cfg = readSamsaraForm();
+  if (!cfg.token) { el.innerHTML = '<span style="color:var(--red);">Enter a token first.</span>'; return; }
+  el.innerHTML = '<span style="color:var(--text-2);">&#8635; Testing…</span>';
+  try {
+    const evs = await samsaraFetchEvents(Object.assign({}, cfg, { days: 7 }));
+    el.innerHTML = '<span style="color:var(--green);">&#10003; Connected — ' + evs.length + ' harsh events in the last 7 days.</span>';
+  } catch (e) {
+    el.innerHTML = '<span style="color:var(--red);">' + samsaraErrText(e) + '</span>';
+  }
+}
+
+// ---------- header badge ----------
+function renderHarshBadge() {
+  const el = document.getElementById('harsh-badge');
+  if (!el) return;
+  const n = harshOpenTotal();
+  const um = harshUnmatched().length;
+  el.innerHTML = HARSH.loading
+    ? `<span style="color:var(--text-2);">&#8635; Samsara</span>`
+    : HARSH.error === 'not_configured'
+      ? `<span style="color:var(--text-2);">Samsara: set up</span>`
+      : HARSH.error
+        ? `<span style="color:var(--red);">&#9888; Samsara error</span>`
+        : `<span style="color:${n?'var(--red)':'var(--text-2)'};">${n?`&#9888; ${n} harsh`:'&#10003; Samsara clear'}</span>${um?`<span style="color:var(--amber);margin-left:6px;">${um} unmapped</span>`:''}`;
+}
+
+// Refresh on load and every 10 minutes. Read-only — nothing destructive,
+// nothing written to Firestore by this timer.
+function startSamsaraPolling() {
+  const cfg = samsaraCfg();
+  if (!cfg.token) { HARSH.error = 'not_configured'; renderHarshBadge(); return; }
+  fetchHarshEvents(true);
+  setInterval(() => fetchHarshEvents(true), 10 * 60 * 1000);
+}
+
+
+// ============================================================
+//  AFTER-HOURS COVERAGE
+//  Two people alternate the two night shifts each week.
+//  Shift windows are stored in Chicago time; Macedonia times are
+//  computed live so the DST-mismatch weeks self-correct.
+// ============================================================
+
+const AH_TZ_US = 'America/Chicago';
+const AH_TZ_MK = 'Europe/Skopje';
+
+function ahDefaults() {
+  return {
+    people: [
+      { id: 'p1', name: 'Mile' },
+      { id: 'p2', name: 'Anna' }
+    ],
+    shifts: [
+      { id: 's1', label: '1st Shift', startH: 15, startM: 0, endH: 23, endM: 0 },
+      { id: 's2', label: '2nd Shift', startH: 23, startM: 0, endH:  6, endM: 0 }
+    ],
+    // Week of Mon Oct 12 2026: Mile on 1st, Anna on 2nd. Parity flips weekly from here.
+    anchorWeek: '2026-10-12',
+    anchorFirst: 'p1',
+    overrides: {}   // 'YYYY-MM-DD' (Monday) -> { s1:personId, s2:personId, note }
+  };
+}
+function ahCfg() {
+  if (!S.afterHours || !S.afterHours.people) S.afterHours = ahDefaults();
+  return S.afterHours;
+}
+function ahSave() { save(); }
+
+// ---------- week math (weeks start Monday) ----------
+function ahMonday(d) {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const dow = (x.getDay() + 6) % 7;          // Mon=0 … Sun=6
+  x.setDate(x.getDate() - dow);
+  return x;
+}
+function ahKey(d) {
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+function ahParseKey(k) {
+  const [y,m,d] = k.split('-').map(Number);
+  return new Date(y, m-1, d);
+}
+function ahWeeksBetween(aKey, bKey) {
+  return Math.round((ahParseKey(bKey) - ahParseKey(aKey)) / (7*86400000));
+}
+
+// Who is on which shift for the Monday-keyed week.
+function ahAssignment(weekKey) {
+  const cfg = ahCfg();
+  const ov = cfg.overrides[weekKey];
+  if (ov && ov.s1 && ov.s2) return { s1: ov.s1, s2: ov.s2, note: ov.note || '', manual: true };
+  const [a, b] = cfg.people.map(p => p.id);
+  const flip = Math.abs(ahWeeksBetween(cfg.anchorWeek, weekKey)) % 2 === 1;
+  const first = cfg.anchorFirst === a ? a : b;
+  const second = first === a ? b : a;
+  return flip ? { s1: second, s2: first, note:'', manual:false }
+              : { s1: first,  s2: second, note:'', manual:false };
+}
+function ahPerson(id) {
+  return ahCfg().people.find(p => p.id === id) || { id, name: '—' };
+}
+
+// ---------- timezone ----------
+// Offset of a zone from UTC at a given instant, in ms.
+function ahTzOffset(ts, tz) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hour12: false,
+    year:'numeric', month:'2-digit', day:'2-digit',
+    hour:'2-digit', minute:'2-digit', second:'2-digit'
+  }).formatToParts(new Date(ts));
+  const o = {};
+  parts.forEach(p => { o[p.type] = p.value; });
+  const asUTC = Date.UTC(+o.year, +o.month-1, +o.day, o.hour === '24' ? 0 : +o.hour, +o.minute, +o.second);
+  return asUTC - ts;
+}
+// Convert a Chicago wall-clock time on a given date into a real instant.
+function ahChicagoInstant(dateObj, h, m) {
+  const want = Date.UTC(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate(), h, m);
+  let ts = want;
+  for (let i = 0; i < 3; i++) {
+    const next = want - ahTzOffset(ts, AH_TZ_US);
+    if (next === ts) break;
+    ts = next;
+  }
+  return ts;
+}
+function ahFmt(ts, tz) {
+  return new Intl.DateTimeFormat('en-US', { timeZone: tz, hour:'numeric', minute:'2-digit', hour12:true })
+    .format(new Date(ts)).toLowerCase().replace(' ', '');
+}
+function ahZoneAbbr(ts, tz) {
+  const p = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName:'short' }).formatToParts(new Date(ts));
+  const z = p.find(x => x.type === 'timeZoneName');
+  return z ? z.value : '';
+}
+
+// Both time windows for a shift, anchored on the Monday of that week.
+function ahShiftTimes(shift, weekKey) {
+  const mon   = ahParseKey(weekKey);
+  const start = ahChicagoInstant(mon, shift.startH, shift.startM);
+  const endDay = new Date(mon);
+  // end at or before start means the shift runs past midnight
+  if (shift.endH * 60 + shift.endM <= shift.startH * 60 + shift.startM) endDay.setDate(endDay.getDate() + 1);
+  const end = ahChicagoInstant(endDay, shift.endH, shift.endM);
+  return {
+    us: ahFmt(start, AH_TZ_US) + '–' + ahFmt(end, AH_TZ_US),
+    mk: ahFmt(start, AH_TZ_MK) + '–' + ahFmt(end, AH_TZ_MK),
+    usAbbr: ahZoneAbbr(start, AH_TZ_US),
+    mkAbbr: ahZoneAbbr(start, AH_TZ_MK),
+    hours: Math.round((end - start) / 3600000 * 10) / 10,
+    startTs: start, endTs: end
+  };
+}
+// The weeks where US and EU DST are out of step shift the gap by an hour.
+function ahOffsetHours(weekKey) {
+  const t = ahChicagoInstant(ahParseKey(weekKey), 12, 0);
+  return Math.round((ahTzOffset(t, AH_TZ_MK) - ahTzOffset(t, AH_TZ_US)) / 3600000);
+}
+// Normal Chicago<->Skopje gap is 7h; the mismatch windows run at 6h.
+function ahIsOddWeek(weekKey) { return ahOffsetHours(weekKey) !== 7; }
+
+// Who is on duty right now, if anyone.
+function ahOnNow() {
+  const now = Date.now();
+  for (const off of [-1, 0]) {               // yesterday's late shift can still be running
+    const day = new Date(Date.now() + off * 86400000);
+    const wk  = ahKey(ahMonday(day));
+    const asn = ahAssignment(wk);
+    const cfg = ahCfg();
+    for (const sh of cfg.shifts) {
+      const start = ahChicagoInstant(new Date(day.getFullYear(), day.getMonth(), day.getDate()), sh.startH, sh.startM);
+      const endDay = new Date(day.getFullYear(), day.getMonth(), day.getDate());
+      if (sh.endH * 60 + sh.endM <= sh.startH * 60 + sh.startM) endDay.setDate(endDay.getDate() + 1);
+      const end = ahChicagoInstant(endDay, sh.endH, sh.endM);
+      if (now >= start && now < end) {
+        return { person: ahPerson(asn[sh.id]), shift: sh, endTs: end };
+      }
+    }
+  }
+  return null;
+}
+
+// ---------- Today hub card ----------
+function ahTodayCardHTML() {
+  const cfg  = ahCfg();
+  const wk   = ahKey(ahMonday(new Date()));
+  const asn  = ahAssignment(wk);
+  const live = ahOnNow();
+  const odd  = ahIsOddWeek(wk);
+  const mon  = ahParseKey(wk);
+  const sun  = new Date(mon.getTime() + 6*86400000);
+  const range = mon.toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' – ' + sun.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+
+  return `<div class="today-card" style="border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;margin-bottom:14px;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+      <span style="font-size:15px;">&#127769;</span>
+      <span style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:13px;letter-spacing:.07em;text-transform:uppercase;">After-Hours Coverage</span>
+      <span class="mono" style="font-size:10px;color:var(--text-2);">${range}</span>
+      ${asn.manual?`<span style="font-size:9px;font-weight:700;letter-spacing:.05em;padding:1px 6px;border-radius:99px;background:var(--amber-dim);color:var(--amber);">OVERRIDE</span>`:''}
+      <button class="btn-ghost" style="margin-left:auto;padding:3px 9px;font-size:10px;" onclick="openAfterHoursModal()">History &amp; Edit</button>
+    </div>
+
+    ${live?`<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;margin-bottom:10px;border:1px solid var(--green);background:var(--green-dim);border-radius:var(--radius);">
+      <span style="width:7px;height:7px;border-radius:50%;background:var(--green);flex-shrink:0;"></span>
+      <span style="font-size:12px;"><strong>${live.person.name}</strong> is on now &middot; <span class="mono" style="color:var(--text-2);">until ${ahFmt(live.endTs, AH_TZ_US)} ${ahZoneAbbr(live.endTs, AH_TZ_US)} / ${ahFmt(live.endTs, AH_TZ_MK)} MK</span></span>
+    </div>`:`<div style="padding:7px 10px;margin-bottom:10px;border:1px solid var(--border);border-radius:var(--radius);font-size:12px;color:var(--text-2);">
+      No one on after-hours right now &mdash; next up <strong style="color:var(--text-1);">${ahPerson(asn.s1).name}</strong> at ${ahShiftTimes(cfg.shifts[0], wk).us.split('–')[0]}
+    </div>`}
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+      ${cfg.shifts.map(sh => {
+        const t = ahShiftTimes(sh, wk);
+        const onNow = live && live.shift.id === sh.id;
+        return `<div style="border:1px solid ${onNow?'var(--green)':'var(--border)'};border-radius:var(--radius);padding:10px 12px;">
+          <div style="font-size:9px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--text-2);">${sh.label}</div>
+          <div style="font-size:14px;font-weight:700;margin-top:3px;">${ahPerson(asn[sh.id]).name}</div>
+          <div class="mono" style="font-size:11px;color:var(--text-1);margin-top:5px;">${t.us} <span style="color:var(--text-2);">${t.usAbbr}</span></div>
+          <div class="mono" style="font-size:11px;color:var(--text-2);">${t.mk} <span>MK</span></div>
+        </div>`;
+      }).join('')}
+    </div>
+
+    ${odd?`<div style="margin-top:9px;font-size:10px;color:var(--amber);">&#9888; Daylight-saving gap is ${ahOffsetHours(wk)}h this week instead of the usual &mdash; Macedonia times above already account for it.</div>`:''}
+    ${asn.note?`<div style="margin-top:9px;font-size:11px;color:var(--text-2);">${asn.note}</div>`:''}
+  </div>`;
+}
+
+// ---------- history + edit ----------
+function openAfterHoursModal() {
+  const cfg = ahCfg();
+  const thisWk = ahMonday(new Date());
+  const rows = [];
+  for (let i = 4; i >= -8; i--) {            // 4 weeks ahead … 8 weeks back
+    const mon = new Date(thisWk.getTime() + i*7*86400000);
+    rows.push(ahKey(mon));
+  }
+  const opts = p => cfg.people.map(x=>`<option value="${x.id}" ${x.id===p?'selected':''}>${x.name}</option>`).join('');
+
+  openModal(`<div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">After-Hours Rotation</div>
+      <button class="modal-close" onclick="closeModal()">&#10005;</button>
+    </div>
+    <div class="modal-body">
+      <div class="pf-label" style="margin-bottom:8px;">Shift windows (Chicago time &mdash; Macedonia is calculated)</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
+        ${cfg.shifts.map((sh,i)=>`<div style="border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;">
+          <input class="input-field" style="font-size:11px;padding:4px 6px;margin-bottom:6px;" value="${sh.label}" onchange="ahSetShift(${i},'label',this.value)">
+          <div style="display:flex;align-items:center;gap:5px;">
+            <input class="input-field" type="time" style="font-size:11px;padding:4px 6px;" value="${String(sh.startH).padStart(2,'0')}:${String(sh.startM).padStart(2,'0')}" onchange="ahSetShift(${i},'start',this.value)">
+            <span style="color:var(--text-2);">&rarr;</span>
+            <input class="input-field" type="time" style="font-size:11px;padding:4px 6px;" value="${String(sh.endH).padStart(2,'0')}:${String(sh.endM).padStart(2,'0')}" onchange="ahSetShift(${i},'end',this.value)">
+          </div>
+          <div class="mono" style="font-size:10px;color:var(--text-2);margin-top:5px;">= ${ahShiftTimes(sh, ahKey(thisWk)).mk} MK this week</div>
+        </div>`).join('')}
+      </div>
+
+      <div class="pf-label" style="margin-bottom:8px;">People</div>
+      <div style="display:flex;gap:10px;margin-bottom:16px;">
+        ${cfg.people.map((p,i)=>`<input class="input-field" style="font-size:12px;" value="${p.name}" onchange="ahSetPerson(${i},this.value)">`).join('')}
+      </div>
+
+      <div class="pf-label" style="margin-bottom:8px;">Schedule &mdash; auto-alternates; change a row to override that week</div>
+      <table style="width:100%;border-collapse:collapse;font-size:11px;">
+        <thead><tr style="border-bottom:1px solid var(--border);">
+          <th style="text-align:left;padding:5px 6px;color:var(--text-2);font-size:9px;letter-spacing:.08em;font-family:Barlow Condensed,sans-serif;">WEEK</th>
+          ${cfg.shifts.map(sh=>`<th style="text-align:left;padding:5px 6px;color:var(--text-2);font-size:9px;letter-spacing:.08em;font-family:Barlow Condensed,sans-serif;">${sh.label.toUpperCase()}</th>`).join('')}
+          <th style="padding:5px 6px;"></th>
+        </tr></thead>
+        <tbody>
+        ${rows.map(k => {
+          const a = ahAssignment(k);
+          const mon = ahParseKey(k);
+          const isNow = k === ahKey(thisWk);
+          const future = mon > thisWk;
+          return `<tr style="border-bottom:1px solid var(--border);${isNow?'background:var(--accent-dim);':''}">
+            <td class="mono" style="padding:6px;white-space:nowrap;${isNow?'font-weight:700;':''}">
+              ${mon.toLocaleDateString('en-US',{month:'short',day:'numeric'})}${isNow?' &larr; now':future?'':''}
+              ${ahIsOddWeek(k)?`<span title="DST gap differs this week" style="color:var(--amber);"> &#9888;</span>`:''}
+            </td>
+            ${cfg.shifts.map(sh=>`<td style="padding:4px 6px;">
+              <select class="select-field" style="font-size:11px;padding:3px 6px;" onchange="ahSetOverride('${k}','${sh.id}',this.value)">${opts(a[sh.id])}</select>
+            </td>`).join('')}
+            <td style="padding:4px 6px;text-align:right;white-space:nowrap;">
+              ${a.manual?`<button class="btn-ghost" style="padding:2px 7px;font-size:9px;" onclick="ahClearOverride('${k}')">reset</button>`
+                        :`<span style="font-size:9px;color:var(--text-3);">auto</span>`}
+            </td>
+          </tr>`;
+        }).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>`);
+}
+
+function ahSetShift(i, field, val) {
+  const cfg = ahCfg();
+  if (field === 'label') cfg.shifts[i].label = val;
+  else {
+    const [h,m] = val.split(':').map(Number);
+    if (field === 'start') { cfg.shifts[i].startH = h; cfg.shifts[i].startM = m; }
+    else                   { cfg.shifts[i].endH   = h; cfg.shifts[i].endM   = m; }
+  }
+  ahSave(); openAfterHoursModal();
+}
+function ahSetPerson(i, name) {
+  const cfg = ahCfg();
+  cfg.people[i].name = name.trim() || cfg.people[i].name;
+  ahSave(); openAfterHoursModal();
+}
+function ahSetOverride(weekKey, shiftId, personId) {
+  const cfg = ahCfg();
+  const cur = ahAssignment(weekKey);
+  const next = { s1: cur.s1, s2: cur.s2, note: cur.note || '' };
+  next[shiftId] = personId;
+  cfg.overrides[weekKey] = next;
+  ahSave(); openAfterHoursModal();
+}
+function ahClearOverride(weekKey) {
+  delete ahCfg().overrides[weekKey];
+  ahSave(); openAfterHoursModal();
+}
+
 loadTheme();
 
 let __appBooted = false;
@@ -5932,7 +6775,7 @@ auth.onAuthStateChanged(user => {
     showApp();
     if (!__appBooted) {
       __appBooted = true;
-      load().then(() => { computeRiskFlags(); render(); });
+      load().then(() => { computeRiskFlags(); render(); startSamsaraPolling(); });
     }
   } else {
     __appBooted = false;
